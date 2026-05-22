@@ -1,5 +1,7 @@
 import { signOssRequest } from "./sdk.js";
 
+const CACHE_TTL = 604800;
+
 export async function fetchWithCache(request, upstreamUrl, ctx, env = {}) {
   const method = request.method.toUpperCase();
 
@@ -9,8 +11,6 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}) {
       headers: { allow: "GET, HEAD" },
     });
   }
-
-  // Range 请求通常用于大文件断点/拖动播放，先直连上游，避免缓存碎片复杂化。
   if (request.headers.has("range")) {
     return fetch(await createOssRequest(upstreamUrl, method, request.headers, env));
   }
@@ -20,6 +20,8 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}) {
   const cached = await cache.match(cacheKey);
 
   if (cached) {
+    // 命中后重新 put 一次，用滑动过期的方式延长热门资源在 Worker Cache 中的存活时间。
+    ctx.waitUntil(cache.put(cacheKey, withCacheTtl(cached.clone())));
     return withCacheHeader(cached, "HIT", method);
   }
 
@@ -27,10 +29,7 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}) {
 
   const headers = new Headers(upstreamResponse.headers);
 
-  // 如果 OSS 没有设置缓存时间，给 Worker Cache 一个默认 TTL。
-  if (!headers.has("cache-control")) {
-    headers.set("cache-control", "public, max-age=86400");
-  }
+  headers.set("cache-control", `public, max-age=${CACHE_TTL}`);
 
   const response = new Response(upstreamResponse.body, {
     status: upstreamResponse.status,
@@ -82,6 +81,17 @@ function pickRequestHeaders(headers) {
   }
 
   return result;
+}
+
+function withCacheTtl(response) {
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", `public, max-age=${CACHE_TTL}`);
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function jsonMetadata(cacheStatus, url, status, headers) {

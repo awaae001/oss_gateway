@@ -69,6 +69,7 @@ npm run deploy
 
 - 支持 `GET` / `HEAD`
 - 默认只缓存 `200` 响应
-- OSS 没有返回 `cache-control` 时，默认设置 `public, max-age=86400`
+- Worker Cache TTL 固定为 7 天：`public, max-age=604800`
+- 命中缓存时会重新写入缓存，用滑动过期方式延长热门资源存活时间
 - `Range` 请求暂时直连 OSS，不写入缓存
 - OSS 签名代码在 `src/cache/sdk.js`，不依赖 Aliyun Node SDK
