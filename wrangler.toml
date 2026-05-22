@@ -1,0 +1,13 @@
+name = "oss-router-worker"
+main = "src/index.js"
+compatibility_date = "2026-05-22"
+
+[observability]
+enabled = true
+
+# 改成你的 OSS Bucket Endpoint，例如：
+# OSS_BASE_URL = "https://your-bucket.oss-cn-hangzhou.aliyuncs.com/"
+[vars]
+OSS_BASE_URL = "https://tuchuang-awaae001.oss-cn-hongkong.aliyuncs.com/"
+OSS_BUCKET = "tuchuang-awaae001"
+OSS_REGION = "cn-hongkong"
