@@ -28,8 +28,11 @@ const OSS_SUBRESOURCES = new Set([
 ]);
 
 /**
- * 为 Aliyun OSS 私有 Bucket 生成签名 Request。
- * 使用 OSS 兼容性更好的 Header 签名方式，不依赖 Node.js SDK。
+ * Creates a signed request for accessing a private Aliyun OSS object.
+ *
+ * This implementation uses the OSS-compatible Authorization header signing
+ * scheme and relies only on Web APIs, making it suitable for Cloudflare
+ * Workers and other non-Node.js edge runtimes.
  */
 export async function signOssRequest(url, env, options = {}) {
   const accessKeyId = String(env.OSS_ACCESS_KEY_ID || "").trim();

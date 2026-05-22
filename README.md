@@ -1,53 +1,109 @@
 # oss-router-worker
 
-Cloudflare Worker 代理 Aliyun OSS 私有 Bucket，并写入 Cloudflare Worker Cache。
+[简体中文](./README.zh-CN.md)
 
-## 配置
+A lightweight Cloudflare Worker proxy for private Aliyun OSS buckets, with edge caching powered by the Cloudflare Worker Cache API.
 
-编辑 `wrangler.toml`：
+This project implements Aliyun OSS request signing directly with Web APIs, so it does not depend on the official Aliyun Node.js SDK. It is useful when you want to keep your OSS bucket private while exposing selected files through a Cloudflare Worker endpoint.
+
+## Features
+
+- Proxy private Aliyun OSS objects through Cloudflare Worker
+- Keep OSS bucket private; no public read access required
+- Cache successful `200` responses in `caches.default`
+- 7-day Worker Cache TTL by default
+- Sliding cache renewal on cache hits
+- Optional metadata/debug endpoint via `?is_cache`
+- Optional cache refresh via request header
+- Optional CORS support
+- No Aliyun Node.js SDK dependency
+
+## Configuration
+
+Edit `wrangler.toml`:
 
 ```toml
 [vars]
 OSS_BASE_URL = "https://your_aliyun_oss.aliyuncs.com/"
 OSS_BUCKET = "your_bucket_name"
 OSS_REGION = "cn-hongkong"
-# 为空或删除时不启用 CORS；需要跨域时可设为 "*" 或指定域名
+# Leave empty or remove to disable CORS.
+# Set to "*" or a specific origin to enable CORS.
 CORS_ALLOW_ORIGIN = ""
 ```
 
-AccessKey 是必需的，用 Worker Secret 保存，不要写进代码。缺少密钥时 Worker 会直接抛错：
+Aliyun AccessKey values are sensitive. Store them as Cloudflare Worker Secrets. Do not put them in `wrangler.toml` or source code.
 
-本地开发可创建 `.dev.vars`：
+For local development, create a `.dev.vars` file in the project root:
 
 ```env
 OSS_ACCESS_KEY_ID=xxx
 OSS_ACCESS_KEY_SECRET=xxx
-# 可选：为空或不设置时，不启用强制刷新模块
+# Optional. If empty or unset, the cache refresh feature is disabled.
 CACHE_REFRESH_KEY=your-refresh-key
 ```
 
-## 使用
+For production, set secrets with Wrangler:
+
+```bash
+npx wrangler secret put OSS_ACCESS_KEY_ID
+npx wrangler secret put OSS_ACCESS_KEY_SECRET
+npx wrangler secret put CACHE_REFRESH_KEY
+```
+
+`CACHE_REFRESH_KEY` is optional. If it is empty or not configured, refresh requests are ignored.
+
+## Usage
+
+Install dependencies and start local development:
 
 ```bash
 npm install
 npm run dev
 ```
 
-并把 200 响应存入 `caches.default`。响应头 `x-worker-cache` 会显示：
+Access an OSS object through the Worker:
 
-- `MISS`：本次从 OSS 拉取，并写入缓存
-- `HIT`：本次命中 Worker Cache
-- `REFRESH`：通过请求头强制刷新缓存后返回
+```text
+http://localhost:8787/path/to/file.jpg
+```
 
-查看图片缓存/元数据：
+The Worker signs the OSS request, fetches the private object, stores successful `200` responses in `caches.default`, and returns the file.
+
+The response header `x-worker-cache` indicates cache status:
+
+- `MISS`: fetched from OSS and stored in Worker Cache
+- `HIT`: served from Worker Cache
+- `REFRESH`: cache was force-refreshed via request header
+
+## Metadata / Cache Debugging
+
+Append `?is_cache` to inspect cache and object metadata:
 
 ```text
 http://localhost:8787/path/to/file.jpg?is_cache
 ```
 
-返回 JSON，包含 `cache`、`status`、`contentType`、`contentLength`、`etag`、`lastModified`、`cacheControl`。
+Example response:
 
-图片请求会忽略查询参数，只有 `is_cache` 作为调试开关使用。例如下面几个 URL 会共用同一份缓存，并请求同一个 OSS 对象：
+```json
+{
+  "cache": "HIT",
+  "url": "https://example.com/path/to/file.jpg",
+  "status": 200,
+  "contentType": "image/jpeg",
+  "contentLength": "12345",
+  "etag": "...",
+  "lastModified": "...",
+  "cacheControl": "public, max-age=604800"
+}
+```
+
+## Query Parameter Handling for Images
+
+Image requests ignore query parameters. Only `is_cache` is treated as a debug flag.
+
+These URLs share the same cache entry and request the same OSS object:
 
 ```text
 /path/to/file.jpg
@@ -56,21 +112,27 @@ http://localhost:8787/path/to/file.jpg?is_cache
 /path/to/file.jpg?is_cache
 ```
 
-强制刷新缓存需要先设置 Secret：
+## Force Refresh Cache
+
+Set `CACHE_REFRESH_KEY` first. If it is empty or not configured, this feature is disabled.
+
+Send the refresh key through the request header:
 
 ```bash
-npx wrangler secret put CACHE_REFRESH_KEY
+curl -H "x-cache-refresh-key: your-refresh-key" https://your-domain.com/path/to/file.jpg
 ```
 
-如果 `CACHE_REFRESH_KEY` 为空或没有设置，刷新模块不会启用，请求头会被忽略。
+Behavior:
 
-刷新时带请求头：
+- Correct key: delete the Worker Cache entry, fetch from OSS again, write the new response to cache, and return it
+- Wrong key: return `403 Forbidden`
+- Empty or missing `CACHE_REFRESH_KEY`: refresh module is disabled and the header is ignored
 
-```bash
-curl -H "x-cache-refresh-key: your-refresh-key" https://pic.awaae001.top/path/to/file.jpg
-```
+## CORS
 
-如果设置了 `CORS_ALLOW_ORIGIN`，会开启跨域响应头：
+CORS is disabled by default when `CORS_ALLOW_ORIGIN` is empty or unset.
+
+If `CORS_ALLOW_ORIGIN` is configured, the Worker adds CORS headers:
 
 ```text
 access-control-allow-origin: <CORS_ALLOW_ORIGIN>
@@ -78,19 +140,46 @@ access-control-allow-methods: GET, HEAD, OPTIONS
 access-control-allow-headers: range, if-none-match, if-modified-since, x-cache-refresh-key
 ```
 
-部署：
+Examples:
+
+```toml
+CORS_ALLOW_ORIGIN = "*"
+```
+
+or:
+
+```toml
+CORS_ALLOW_ORIGIN = "https://example.com"
+```
+
+## Deploy
 
 ```bash
 npm run deploy
 ```
 
-## 当前策略
+## Current Cache Strategy
 
-- 支持 `GET` / `HEAD`
-- 默认只缓存 `200` 响应
-- Worker Cache TTL 固定为 7 天：`public, max-age=604800`
-- 命中缓存时会重新写入缓存，用滑动过期方式延长热门资源存活时间
-- `Range` 请求暂时直连 OSS，不写入缓存
-- 可选支持 CORS，`CORS_ALLOW_ORIGIN` 为空或未设置时不启用
-- 可选支持请求头 `x-cache-refresh-key` 强制刷新缓存
-- OSS 签名代码在 `src/cache/sdk.js`，不依赖 Aliyun Node SDK
+- Supports `GET` and `HEAD`
+- Caches only `200` responses by default
+- Worker Cache TTL is fixed to 7 days: `public, max-age=604800`
+- Cache hits are written back to cache to extend lifetime for hot objects
+- `Range` requests are proxied directly to OSS and are not cached
+- Image query parameters are ignored for cache key normalization
+- Optional CORS support through `CORS_ALLOW_ORIGIN`
+- Optional cache refresh through `x-cache-refresh-key`
+- OSS signing is implemented in `src/cache/sdk.js` without the Aliyun Node.js SDK
+
+## Why Use This?
+
+Aliyun OSS private buckets usually require signed requests. Instead of exposing public OSS URLs or running a backend server, this Worker acts as a small edge proxy:
+
+```text
+Client -> Cloudflare Worker -> Private Aliyun OSS
+```
+
+This helps reduce direct OSS exposure, enables Cloudflare edge caching, and gives you a place to add custom access control, cache refresh, metadata debugging, CORS, and anti-abuse rules.
+
+## Notes
+
+Cloudflare Worker Cache is an edge cache, not permanent storage. Objects may be evicted before the configured TTL under cache pressure. For production use, consider combining this Worker with Cloudflare WAF, rate limiting, and signed URLs if you need stronger anti-abuse protection.
