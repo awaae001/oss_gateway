@@ -108,10 +108,6 @@ function canonicalizedOssHeaders(headers) {
   return `${pairs.map(([name, value]) => `${name}:${value}`).join("\n")}\n`;
 }
 
-function percentEncode(value) {
-  return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
-}
-
 async function hmacSha1Base64(secret, value) {
   const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
   const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(value));

@@ -19,18 +19,22 @@ export async function handleRequest(request, env, ctx) {
   }
 
   const isMetadataRequest = url.searchParams.has("is_cache");
+  const isImageRequest = /\.(avif|bmp|gif|heic|ico|jpe?g|png|svg|webp)$/i.test(url.pathname);
   if (isMetadataRequest) {
     url.searchParams.delete("is_cache");
   }
+  if (isImageRequest) {
+    url.search = "";
+  }
 
+  const normalizedRequest = new Request(url.toString(), request);
   const upstreamUrl = buildOssUrl(env.OSS_BASE_URL, objectKey, url.search);
 
   if (isMetadataRequest) {
-    const metadataRequest = new Request(url.toString(), request);
-    return getImageMetadata(metadataRequest, upstreamUrl, env);
+    return getImageMetadata(normalizedRequest, upstreamUrl, env);
   }
 
-  return fetchWithCache(request, upstreamUrl, ctx, env);
+  return fetchWithCache(normalizedRequest, upstreamUrl, ctx, env);
 }
 
 function buildOssUrl(baseUrl, objectKey, search) {

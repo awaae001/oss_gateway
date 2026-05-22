@@ -1,6 +1,7 @@
 import { signOssRequest } from "./sdk.js";
 
 const CACHE_TTL = 604800;
+const REFRESH_HEADER = "x-cache-refresh-key";
 
 export async function fetchWithCache(request, upstreamUrl, ctx, env = {}) {
   const method = request.method.toUpperCase();
@@ -17,16 +18,25 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}) {
 
   const cache = caches.default;
   const cacheKey = new Request(request.url, { method: "GET" });
-  const cached = await cache.match(cacheKey);
+  const refreshKey = String(env.CACHE_REFRESH_KEY || "").trim();
+  const providedRefreshKey = request.headers.get(REFRESH_HEADER);
+  const shouldRefresh = Boolean(refreshKey && providedRefreshKey);
 
-  if (cached) {
-    // 命中后重新 put 一次，用滑动过期的方式延长热门资源在 Worker Cache 中的存活时间。
-    ctx.waitUntil(cache.put(cacheKey, withCacheTtl(cached.clone())));
-    return withCacheHeader(cached, "HIT", method);
+  if (shouldRefresh && providedRefreshKey !== refreshKey) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  if (shouldRefresh) {
+    await cache.delete(cacheKey);
+  } else {
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+      ctx.waitUntil(cache.put(cacheKey, withCacheTtl(cached.clone())));
+      return withCacheHeader(cached, "HIT", method);
+    }
   }
 
   const upstreamResponse = await fetch(await createOssRequest(upstreamUrl, method, request.headers, env));
-
   const headers = new Headers(upstreamResponse.headers);
 
   headers.set("cache-control", `public, max-age=${CACHE_TTL}`);
@@ -41,7 +51,7 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}) {
     ctx.waitUntil(cache.put(cacheKey, response.clone()));
   }
 
-  return withCacheHeader(response, "MISS", method);
+  return withCacheHeader(response, shouldRefresh ? "REFRESH" : "MISS", method);
 }
 
 export async function getImageMetadata(request, upstreamUrl, env = {}) {
@@ -73,8 +83,6 @@ async function createOssRequest(upstreamUrl, method, requestHeaders, env) {
 
 function pickRequestHeaders(headers) {
   const result = new Headers();
-
-  // 按需透传，避免把 Worker 的 Host/Cookie 等无关头传给 OSS。
   for (const name of ["range", "if-none-match", "if-modified-since"]) {
     const value = headers.get(name);
     if (value) result.set(name, value);

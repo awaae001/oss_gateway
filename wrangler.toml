@@ -11,3 +11,5 @@ enabled = true
 OSS_BASE_URL = "https://tuchuang-awaae001.oss-cn-hongkong.aliyuncs.com/"
 OSS_BUCKET = "tuchuang-awaae001"
 OSS_REGION = "cn-hongkong"
+# 为空或删除时不启用 CORS；需要跨域时可设为 "*" 或指定域名
+CORS_ALLOW_ORIGIN = ""
