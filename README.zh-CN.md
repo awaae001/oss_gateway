@@ -18,35 +18,46 @@
 
 ## 配置
 
-编辑 `wrangler.toml`：
+Worker 会从 Cloudflare Worker 环境变量绑定（`env.*`）读取全部配置。生产环境建议直接在 Cloudflare 网站后台的 Worker **Settings → Variables** 中配置，不需要把真实配置写进 `wrangler.toml`。
 
-```toml
-[vars]
-OSS_BASE_URL = "https://your_aliyun_oss.aliyuncs.com/"
-OSS_BUCKET = "your_bucket_name"
-OSS_REGION = "cn-hongkong"
-# 为空或删除时不启用 CORS。
-# 需要跨域时可设置为 "*" 或指定来源域名。
-CORS_ALLOW_ORIGIN = ""
-```
+必需变量：
 
-Aliyun AccessKey 属于敏感信息，请使用 Cloudflare Worker Secrets 保存，不要写入 `wrangler.toml` 或源代码。
+| 名称 | 推荐类型 | 说明 |
+| --- | --- | --- |
+| `OSS_BASE_URL` | Secret 或 Variable | OSS Bucket Endpoint，例如 `https://your-bucket.oss-cn-hangzhou.aliyuncs.com/` |
+| `OSS_BUCKET` | Secret 或 Variable | OSS Bucket 名称 |
+| `OSS_REGION` | Secret 或 Variable | OSS 区域，例如 `oss-cn-hangzhou` 或 `cn-hongkong` |
+| `OSS_ACCESS_KEY_ID` | Secret | Aliyun AccessKey ID |
+| `OSS_ACCESS_KEY_SECRET` | Secret | Aliyun AccessKey Secret |
 
-本地开发时，在项目根目录创建 `.dev.vars`：
+可选变量：
 
-```env
-OSS_ACCESS_KEY_ID=xxx
-OSS_ACCESS_KEY_SECRET=xxx
-# 可选。为空或不设置时，不启用强制刷新缓存功能。
-CACHE_REFRESH_KEY=your-refresh-key
-```
+| 名称 | 推荐类型 | 说明 |
+| --- | --- | --- |
+| `CACHE_REFRESH_KEY` | Secret | 配置后启用强制刷新缓存 |
+| `CORS_ALLOW_ORIGIN` | Variable | 为空或不设置时禁用 CORS；可设置为 `*` 或指定来源域名 |
 
-生产环境中使用 Wrangler 设置 Secrets：
+其中 `OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET`、`CACHE_REFRESH_KEY` 建议在 Cloudflare 后台设置为 **Secret**。如果更希望隐藏 Bucket 信息，也可以把 `OSS_BASE_URL`、`OSS_BUCKET`、`OSS_REGION` 一并设置为 Secret。代码读取方式相同。
+
+也可以使用 Wrangler 设置 Secrets：
 
 ```bash
 npx wrangler secret put OSS_ACCESS_KEY_ID
 npx wrangler secret put OSS_ACCESS_KEY_SECRET
 npx wrangler secret put CACHE_REFRESH_KEY
+```
+
+本地开发时，可以在项目根目录创建 `.dev.vars`。该文件已被 Git 忽略：
+
+```env
+OSS_BASE_URL=https://your-bucket.oss-cn-hangzhou.aliyuncs.com/
+OSS_BUCKET=your-bucket
+OSS_REGION=oss-cn-hangzhou
+OSS_ACCESS_KEY_ID=xxx
+OSS_ACCESS_KEY_SECRET=xxx
+# 可选。为空或不设置时，不启用强制刷新缓存功能。
+CACHE_REFRESH_KEY=your-refresh-key
+CORS_ALLOW_ORIGIN=
 ```
 
 `CACHE_REFRESH_KEY` 是可选项。如果为空或未配置，强制刷新模块不会启用。

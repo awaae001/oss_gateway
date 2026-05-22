@@ -20,35 +20,46 @@ This project implements Aliyun OSS request signing directly with Web APIs, so it
 
 ## Configuration
 
-Edit `wrangler.toml`:
+The Worker reads all configuration from Cloudflare Worker environment bindings (`env.*`). For production, configure everything directly in the Cloudflare dashboard under Worker **Settings → Variables**. You do not need to put real values in `wrangler.toml`.
 
-```toml
-[vars]
-OSS_BASE_URL = "https://your_aliyun_oss.aliyuncs.com/"
-OSS_BUCKET = "your_bucket_name"
-OSS_REGION = "cn-hongkong"
-# Leave empty or remove to disable CORS.
-# Set to "*" or a specific origin to enable CORS.
-CORS_ALLOW_ORIGIN = ""
-```
+Required variables:
 
-Aliyun AccessKey values are sensitive. Store them as Cloudflare Worker Secrets. Do not put them in `wrangler.toml` or source code.
+| Name | Recommended type | Description |
+| --- | --- | --- |
+| `OSS_BASE_URL` | Secret or variable | OSS bucket endpoint, for example `https://your-bucket.oss-cn-hangzhou.aliyuncs.com/` |
+| `OSS_BUCKET` | Secret or variable | OSS bucket name |
+| `OSS_REGION` | Secret or variable | OSS region, for example `oss-cn-hangzhou` or `cn-hongkong` |
+| `OSS_ACCESS_KEY_ID` | Secret | Aliyun AccessKey ID |
+| `OSS_ACCESS_KEY_SECRET` | Secret | Aliyun AccessKey Secret |
 
-For local development, create a `.dev.vars` file in the project root:
+Optional variables:
 
-```env
-OSS_ACCESS_KEY_ID=xxx
-OSS_ACCESS_KEY_SECRET=xxx
-# Optional. If empty or unset, the cache refresh feature is disabled.
-CACHE_REFRESH_KEY=your-refresh-key
-```
+| Name | Recommended type | Description |
+| --- | --- | --- |
+| `CACHE_REFRESH_KEY` | Secret | Enables force-refresh when provided |
+| `CORS_ALLOW_ORIGIN` | Variable | Empty/unset disables CORS; use `*` or a specific origin to enable it |
 
-For production, set secrets with Wrangler:
+`OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, and `CACHE_REFRESH_KEY` should be set as **Secrets** in the Cloudflare dashboard. If you also want to hide bucket information, you can set `OSS_BASE_URL`, `OSS_BUCKET`, and `OSS_REGION` as Secrets too. The code reads them the same way.
+
+You can also set Secrets with Wrangler:
 
 ```bash
 npx wrangler secret put OSS_ACCESS_KEY_ID
 npx wrangler secret put OSS_ACCESS_KEY_SECRET
 npx wrangler secret put CACHE_REFRESH_KEY
+```
+
+For local development, create a `.dev.vars` file in the project root. This file is ignored by Git:
+
+```env
+OSS_BASE_URL=https://your-bucket.oss-cn-hangzhou.aliyuncs.com/
+OSS_BUCKET=your-bucket
+OSS_REGION=oss-cn-hangzhou
+OSS_ACCESS_KEY_ID=xxx
+OSS_ACCESS_KEY_SECRET=xxx
+# Optional. If empty or unset, the cache refresh feature is disabled.
+CACHE_REFRESH_KEY=your-refresh-key
+CORS_ALLOW_ORIGIN=
 ```
 
 `CACHE_REFRESH_KEY` is optional. If it is empty or not configured, refresh requests are ignored.
