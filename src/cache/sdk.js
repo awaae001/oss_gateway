@@ -32,7 +32,13 @@ const OSS_SUBRESOURCES = new Set([
  * 使用 OSS 兼容性更好的 Header 签名方式，不依赖 Node.js SDK。
  */
 export async function signOssRequest(url, env, options = {}) {
-  const missing = ["OSS_ACCESS_KEY_ID", "OSS_ACCESS_KEY_SECRET"].filter((key) => !env?.[key]);
+  const accessKeyId = String(env.OSS_ACCESS_KEY_ID || "").trim();
+  const accessKeySecret = String(env.OSS_ACCESS_KEY_SECRET || "").trim();
+  const missing = [
+    ["OSS_ACCESS_KEY_ID", accessKeyId],
+    ["OSS_ACCESS_KEY_SECRET", accessKeySecret],
+  ].filter(([, value]) => !value).map(([key]) => key);
+
   if (missing.length > 0) {
     throw new Error(`Missing OSS config: ${missing.join(", ")}`);
   }
@@ -48,8 +54,8 @@ export async function signOssRequest(url, env, options = {}) {
   const canonicalizedResource = `/${bucket}${canonicalPath(requestUrl.pathname)}${canonicalSubresources(requestUrl.searchParams)}`;
   const stringToSign = `${method}\n${headers.get("content-md5") || ""}\n${headers.get("content-type") || ""}\n${date}\n${canonicalizedOssHeaders(headers)}${canonicalizedResource}`;
 
-  const signature = await hmacSha1Base64(env.OSS_ACCESS_KEY_SECRET, stringToSign);
-  headers.set("authorization", `${OSS_AUTH_PREFIX} ${env.OSS_ACCESS_KEY_ID}:${signature}`);
+  const signature = await hmacSha1Base64(accessKeySecret, stringToSign);
+  headers.set("authorization", `${OSS_AUTH_PREFIX} ${accessKeyId}:${signature}`);
 
   return new Request(requestUrl.toString(), {
     method,
@@ -59,11 +65,16 @@ export async function signOssRequest(url, env, options = {}) {
 }
 
 function canonicalPath(pathname) {
-  try {
-    return decodeURI(pathname);
-  } catch {
-    return pathname;
-  }
+  return pathname
+    .split("/")
+    .map((part) => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part;
+      }
+    })
+    .join("/");
 }
 
 function canonicalSubresources(searchParams) {
