@@ -51,6 +51,14 @@ https://tuchuang-awaae001.oss-cn-hongkong.aliyuncs.com/path/to/file.jpg
 - `MISS`：本次从 OSS 拉取，并写入缓存
 - `HIT`：本次命中 Worker Cache
 
+查看图片缓存/元数据：
+
+```text
+http://localhost:8787/path/to/file.jpg?is_cache
+```
+
+返回 JSON，包含 `cache`、`status`、`contentType`、`contentLength`、`etag`、`lastModified`、`cacheControl`。
+
 部署：
 
 ```bash

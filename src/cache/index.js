@@ -45,6 +45,27 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}) {
   return withCacheHeader(response, "MISS", method);
 }
 
+export async function getImageMetadata(request, upstreamUrl, env = {}) {
+  const method = request.method.toUpperCase();
+
+  if (method !== "GET" && method !== "HEAD") {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { allow: "GET, HEAD" },
+    });
+  }
+
+  const cacheKey = new Request(request.url, { method: "GET" });
+  const cached = await caches.default.match(cacheKey);
+
+  if (cached) {
+    return jsonMetadata("HIT", request.url, cached.status, cached.headers);
+  }
+
+  const upstreamResponse = await fetch(await createOssRequest(upstreamUrl, "HEAD", request.headers, env));
+  return jsonMetadata("MISS", request.url, upstreamResponse.status, upstreamResponse.headers);
+}
+
 async function createOssRequest(upstreamUrl, method, requestHeaders, env) {
   const headers = pickRequestHeaders(requestHeaders);
 
@@ -61,6 +82,24 @@ function pickRequestHeaders(headers) {
   }
 
   return result;
+}
+
+function jsonMetadata(cacheStatus, url, status, headers) {
+  return new Response(JSON.stringify({
+    cache: cacheStatus,
+    url,
+    status,
+    contentType: headers.get("content-type"),
+    contentLength: headers.get("content-length"),
+    etag: headers.get("etag"),
+    lastModified: headers.get("last-modified"),
+    cacheControl: headers.get("cache-control"),
+  }), {
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
 }
 
 function withCacheHeader(response, cacheStatus, method) {

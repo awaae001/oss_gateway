@@ -1,4 +1,4 @@
-import { fetchWithCache } from "../cache/index.js";
+import { fetchWithCache, getImageMetadata } from "../cache/index.js";
 
 export async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
@@ -18,7 +18,18 @@ export async function handleRequest(request, env, ctx) {
     return json({ error: "Missing object key" }, 400);
   }
 
+  const isMetadataRequest = url.searchParams.has("is_cache");
+  if (isMetadataRequest) {
+    url.searchParams.delete("is_cache");
+  }
+
   const upstreamUrl = buildOssUrl(env.OSS_BASE_URL, objectKey, url.search);
+
+  if (isMetadataRequest) {
+    const metadataRequest = new Request(url.toString(), request);
+    return getImageMetadata(metadataRequest, upstreamUrl, env);
+  }
+
   return fetchWithCache(request, upstreamUrl, ctx, env);
 }
 
