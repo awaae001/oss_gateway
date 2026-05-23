@@ -40,7 +40,6 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}, storag
   headers.set("cache-control", `public, max-age=${getCacheTtl(upstreamResponse.status)}`);
 
   const response = withErrorPage(rebuildResponse(upstreamResponse, { headers }), request, env);
-
   if (CACHEABLE_STATUSES.has(response.status)) {
     ctx.waitUntil(cache.put(cacheKey, response.clone()));
   }
@@ -55,7 +54,6 @@ export async function getImageMetadata(request, upstreamUrl, env = {}, originalR
   if (cached) {
     return jsonMetadata("HIT", request.url, cached.status, cached.headers, originalRequest);
   }
-
   const upstreamResponse = await fetch(await createStorageRequest(upstreamUrl, "HEAD", request.headers, storageClient));
   return jsonMetadata("MISS", request.url, upstreamResponse.status, upstreamResponse.headers, originalRequest);
 }

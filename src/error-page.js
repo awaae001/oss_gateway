@@ -34,7 +34,6 @@ export function withErrorPage(response, request, env = {}) {
   const headers = pickHeaders(response.headers, SAFE_ERROR_RESPONSE_HEADERS);
 
   headers.set("content-type", "text/html; charset=utf-8");
-
   if (!headers.has("cache-control")) {
     headers.set("cache-control", "no-store");
   }
