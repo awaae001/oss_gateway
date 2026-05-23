@@ -1,4 +1,6 @@
+import { withErrorPage } from "../error-page.js";
 import { createStorageClient } from "../providers/index.js";
+import { json, pickHeaders, rebuildResponse } from "../utils.js";
 
 const CACHE_TTL = 604800;
 const CLIENT_ERROR_CACHE_TTL = 1800;
@@ -37,11 +39,7 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}, storag
 
   headers.set("cache-control", `public, max-age=${getCacheTtl(upstreamResponse.status)}`);
 
-  const response = new Response(upstreamResponse.body, {
-    status: upstreamResponse.status,
-    statusText: upstreamResponse.statusText,
-    headers,
-  });
+  const response = withErrorPage(rebuildResponse(upstreamResponse, { headers }), request, env);
 
   if (CACHEABLE_STATUSES.has(response.status)) {
     ctx.waitUntil(cache.put(cacheKey, response.clone()));
@@ -63,30 +61,16 @@ export async function getImageMetadata(request, upstreamUrl, env = {}, originalR
 }
 
 async function createStorageRequest(upstreamUrl, method, requestHeaders, storageClient) {
-  const headers = pickRequestHeaders(requestHeaders);
+  const headers = pickHeaders(requestHeaders, ["range", "if-none-match", "if-modified-since"]);
 
   return storageClient.signedObjectRequest("", { url: upstreamUrl, method, headers });
-}
-
-function pickRequestHeaders(headers) {
-  const result = new Headers();
-  for (const name of ["range", "if-none-match", "if-modified-since"]) {
-    const value = headers.get(name);
-    if (value) result.set(name, value);
-  }
-
-  return result;
 }
 
 function withCacheTtl(response) {
   const headers = new Headers(response.headers);
   headers.set("cache-control", `public, max-age=${getCacheTtl(response.status)}`);
 
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+  return rebuildResponse(response, { headers });
 }
 
 function getCacheTtl(status) {
@@ -94,7 +78,7 @@ function getCacheTtl(status) {
 }
 
 function jsonMetadata(cacheStatus, url, status, headers, request) {
-  return new Response(JSON.stringify({
+  return json({
     cache: cacheStatus,
     url,
     status,
@@ -105,11 +89,8 @@ function jsonMetadata(cacheStatus, url, status, headers, request) {
     cacheControl: headers.get("cache-control"),
     node: getCfNode(request),
     request: getCfRequest(request),
-  }), {
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    },
+  }, 200, {
+    "cache-control": "no-store",
   });
 }
 
@@ -143,9 +124,8 @@ function withCacheHeader(response, cacheStatus, method) {
   const headers = new Headers(response.headers);
   headers.set("x-worker-cache", cacheStatus);
 
-  return new Response(method === "HEAD" ? null : response.body, {
-    status: response.status,
-    statusText: response.statusText,
+  return rebuildResponse(response, {
+    body: method === "HEAD" ? null : response.body,
     headers,
   });
 }

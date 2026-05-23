@@ -1,4 +1,21 @@
+import { withErrorPage } from "./error-page.js";
 import { handleRequest } from "./router/index.js";
+import { filterHeaders, isEnabledByDefault, rebuildResponse } from "./utils.js";
+
+const ALLOWED_RESPONSE_HEADERS = new Set([
+  "accept-ranges",
+  "allow",
+  "cache-control",
+  "content-disposition",
+  "content-encoding",
+  "content-language",
+  "content-length",
+  "content-range",
+  "content-type",
+  "etag",
+  "last-modified",
+  "x-worker-cache",
+]);
 
 export default {
   async fetch(request, env, ctx) {
@@ -6,7 +23,12 @@ export default {
       return withCors(new Response(null, { status: 204 }), env);
     }
 
-    return withCors(await handleRequest(request, env, ctx), env);
+    const response = await handleRequest(request, env, ctx);
+    const sanitizedResponse = isEnabledByDefault(env.SANITIZE_RESPONSE_HEADERS)
+      ? withSanitizedResponseHeaders(response)
+      : response;
+
+    return withCors(withErrorPage(sanitizedResponse, request, env), env);
   },
 };
 
@@ -21,9 +43,12 @@ function withCors(response, env) {
   headers.set("access-control-expose-headers", "content-length, content-type, etag, last-modified, x-worker-cache");
   headers.set("vary", "Origin");
 
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
+  return rebuildResponse(response, { headers });
+}
+
+function withSanitizedResponseHeaders(response) {
+  return rebuildResponse(response, {
+    headers: filterHeaders(response.headers, ALLOWED_RESPONSE_HEADERS),
   });
 }
+

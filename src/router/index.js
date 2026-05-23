@@ -1,7 +1,7 @@
 import { fetchWithCache, getImageMetadata } from "../cache/index.js";
 import { createStorageClient } from "../providers/index.js";
+import { isEnabledByDefault, json, rebuildResponse } from "../utils.js";
 
-const IMAGE_EXTENSION_RE = /\.(avif|bmp|gif|heic|ico|jpe?g|png|svg|webp)$/i;
 const ROUTER_MIDDLEWARES = [
   methodMiddleware,
   configMiddleware,
@@ -60,10 +60,10 @@ function objectKeyMiddleware(routerContext) {
 }
 
 function normalizeRequestMiddleware(routerContext) {
-  const { url, request } = routerContext;
+  const { url, request, env } = routerContext;
   const isMetadataRequest = url.searchParams.has("is_cache");
   const forceInline = url.searchParams.has("inline");
-  const isImageRequest = IMAGE_EXTENSION_RE.test(url.pathname);
+  const queryNormalizationProtectionEnabled = isEnabledByDefault(env.FORCE_QUERY_NORMALIZATION);
 
   if (isMetadataRequest) {
     url.searchParams.delete("is_cache");
@@ -71,7 +71,7 @@ function normalizeRequestMiddleware(routerContext) {
   if (forceInline) {
     url.searchParams.delete("inline");
   }
-  if (isImageRequest) {
+  if (queryNormalizationProtectionEnabled) {
     url.search = "";
   }
 
@@ -94,13 +94,17 @@ function upstreamMiddleware(routerContext) {
 async function responseMiddleware(routerContext) {
   const { normalizedRequest, upstreamUrl, env, ctx, storageClient } = routerContext;
 
-  const response = routerContext.isMetadataRequest
-    ? await getImageMetadata(normalizedRequest, upstreamUrl, env, routerContext.request, storageClient)
-    : await fetchWithCache(normalizedRequest, upstreamUrl, ctx, env, storageClient);
+  try {
+    const response = routerContext.isMetadataRequest
+      ? await getImageMetadata(normalizedRequest, upstreamUrl, env, routerContext.request, storageClient)
+      : await fetchWithCache(normalizedRequest, upstreamUrl, ctx, env, storageClient);
 
-  routerContext.response = routerContext.forceInline && !routerContext.isMetadataRequest
-    ? withInlineDisposition(response)
-    : response;
+    routerContext.response = routerContext.forceInline && !routerContext.isMetadataRequest
+      ? withInlineDisposition(response)
+      : response;
+  } catch {
+    routerContext.response = json({ error: "Bad Gateway" }, 502);
+  }
 }
 
 function withInlineDisposition(response) {
@@ -112,16 +116,6 @@ function withInlineDisposition(response) {
     disposition ? disposition.replace(/^attachment/i, "inline") : "inline",
   );
 
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+  return rebuildResponse(response, { headers });
 }
 
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
-}

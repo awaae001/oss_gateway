@@ -1,3 +1,5 @@
+import { requireConfig } from "../../utils.js";
+
 const SERVICE = "s3";
 const ALGORITHM = "AWS4-HMAC-SHA256";
 const UNSIGNED_PAYLOAD = "UNSIGNED-PAYLOAD";
@@ -26,22 +28,14 @@ export async function signS3ObjectRequest(url, config = {}, options = {}) {
   const endpoint = new URL(url);
   const method = String(options.method || "GET").toUpperCase();
 
-  if (method !== "GET" && method !== "HEAD") {
-    throw new Error(`S3 read-only provider does not support ${method}`);
-  }
-
   const accessKeyId = String(config.accessKeyId || config.OSS_ACCESS_KEY_ID || "").trim();
   const secretAccessKey = String(config.secretAccessKey || config.accessKeySecret || config.OSS_ACCESS_KEY_SECRET || "").trim();
   const region = String(config.region || config.OSS_REGION || "us-east-1").trim();
   const sessionToken = String(config.sessionToken || config.OSS_SESSION_TOKEN || "").trim();
-  const missing = [
+  requireConfig([
     ["OSS_ACCESS_KEY_ID", accessKeyId],
     ["OSS_ACCESS_KEY_SECRET", secretAccessKey],
-  ].filter(([, value]) => !value).map(([name]) => name);
-
-  if (missing.length > 0) {
-    throw new Error(`Missing OSS config: ${missing.join(", ")}`);
-  }
+  ]);
 
   const headers = new Headers(options.headers || {});
   const now = options.date instanceof Date ? options.date : new Date();
@@ -98,14 +92,10 @@ export async function signS3ObjectRequest(url, config = {}, options = {}) {
 export function buildS3ObjectUrl(config = {}, key, search = "") {
   const endpoint = String(config.endpoint || config.baseUrl || config.OSS_BASE_URL || "").trim();
   const bucket = String(config.bucket || config.OSS_BUCKET || "").trim();
-  const missing = [
+  requireConfig([
     ["OSS_BASE_URL", endpoint],
     ["OSS_BUCKET", bucket],
-  ].filter(([, value]) => !value).map(([name]) => name);
-
-  if (missing.length > 0) {
-    throw new Error(`Missing OSS config: ${missing.join(", ")}`);
-  }
+  ]);
 
   const url = new URL(endpoint);
   const pathStyle = /^(1|true|yes|on)$/i.test(String(config.pathStyle ?? config.forcePathStyle ?? config.OSS_FORCE_PATH_STYLE ?? ""));

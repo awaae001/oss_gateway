@@ -11,6 +11,7 @@
 - 支持通过 `OSS_PROVIDER=aliyun` 或 `OSS_PROVIDER=s3` 切换 Provider
 - `200` 响应会写入 `caches.default`
 - `400` 和 `404` 响应会缓存 30 分钟
+- 上游错误不透传 OSS / S3 XML，统一为 Apache 风格错误页
 - 成功响应默认 Worker Cache TTL 为 7 天
 - 缓存命中时自动续期，热门资源更容易留在边缘缓存中
 - 支持通过 `?is_cache` 查看缓存和资源元数据
@@ -57,47 +58,13 @@ Provider 特定可选变量：
 | --- | --- | --- |
 | `CACHE_REFRESH_KEY` | Secret | 配置后启用强制刷新缓存 |
 | `CORS_ALLOW_ORIGIN` | Variable | 为空或不设置时禁用 CORS；可设置为 `*` 或指定来源域名 |
+| `FORCE_QUERY_NORMALIZATION` | Variable | 默认开启。设为 `false` 后，会保留非内部查询参数进入缓存键和上游请求。 |
+| `APACHE_ERROR_PAGE` | Variable | 默认开启。设为 `false` 后，关闭 Apache 风格错误页，直接返回原始错误响应，便于调试上游 XML / 文本错误体。 |
+| `SANITIZE_RESPONSE_HEADERS` | Variable | 默认开启。设为 `false` 后，不再对白名单之外的上游响应头做过滤。 |
 
 其中 `OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET`、`OSS_SESSION_TOKEN`、`CACHE_REFRESH_KEY` 建议在 Cloudflare 后台设置为 **Secret**。如果更希望隐藏 Bucket 信息，也可以把 Endpoint 和 Bucket 相关变量一并设置为 Secret。代码读取方式相同。
 
-也可以使用 Wrangler 设置 Secrets：
-
-```bash
-npx wrangler secret put OSS_ACCESS_KEY_ID
-npx wrangler secret put OSS_ACCESS_KEY_SECRET
-npx wrangler secret put OSS_SESSION_TOKEN
-npx wrangler secret put CACHE_REFRESH_KEY
-```
-
 本地开发时，可以在项目根目录创建 `.dev.vars`。
-
-Aliyun 示例：
-
-```env
-OSS_PROVIDER=aliyun
-OSS_BASE_URL=https://your-bucket.oss-cn-hangzhou.aliyuncs.com/
-OSS_BUCKET=your-bucket
-OSS_ACCESS_KEY_ID=xxx
-OSS_ACCESS_KEY_SECRET=xxx
-# 可选。为空或不设置时，不启用强制刷新缓存功能。
-CACHE_REFRESH_KEY=your-refresh-key
-CORS_ALLOW_ORIGIN=
-```
-
-S3 兼容示例：
-
-```env
-OSS_PROVIDER=s3
-OSS_BASE_URL=https://s3.us-east-1.amazonaws.com/
-OSS_BUCKET=your-bucket
-OSS_REGION=us-east-1
-OSS_ACCESS_KEY_ID=xxx
-OSS_ACCESS_KEY_SECRET=xxx
-OSS_FORCE_PATH_STYLE=false
-# 可选。为空或不设置时，不启用强制刷新缓存功能。
-CACHE_REFRESH_KEY=your-refresh-key
-CORS_ALLOW_ORIGIN=
-```
 
 `CACHE_REFRESH_KEY` 是可选项。如果为空或未配置，强制刷新模块不会启用。
 
@@ -117,6 +84,10 @@ http://localhost:8787/path/to/file.jpg
 ```
 
 Worker 会对上游对象存储请求进行签名，读取私有对象，将 `200` 响应缓存 7 天、`400`/`404` 响应缓存 30 分钟，然后把结果返回给客户端。
+
+当 `APACHE_ERROR_PAGE=true` 时，上游返回错误时，Worker 不会直接透传 OSS / S3 原始 XML 错误体，而是改为返回统一的 Apache 2.4 风格错误页（带随机 OS 标记如 Ubuntu/CentOS/Arch 之一），避免暴露存储类型、错误码细节和部分后端指纹信息。
+
+如果需要排查上游签名、权限或对象不存在等问题，可以临时设置 `APACHE_ERROR_PAGE=false`，直接查看原始错误响应。
 
 响应头 `x-worker-cache` 表示缓存状态：
 
@@ -154,9 +125,11 @@ http://localhost:8787/path/to/file.jpg?is_cache
 }
 ```
 
-## 图片查询参数处理
+## 查询参数处理
 
-图片请求会忽略查询参数，用于规范化缓存 key。`is_cache` 会被当作调试开关处理，`inline` 会强制 Worker 返回 `Content-Disposition: inline`。
+`is_cache` 会被当作调试开关处理，`inline` 会强制 Worker 返回 `Content-Disposition: inline`。这些内部参数本身不会进入缓存键。
+
+默认会把其余查询参数全部移除，用于规范化缓存 key 和上游请求。可通过 `FORCE_QUERY_NORMALIZATION=false` 关闭此行为。
 
 下面这些 URL 会共用同一份缓存，并请求同一个上游对象：
 
@@ -168,7 +141,9 @@ http://localhost:8787/path/to/file.jpg?is_cache
 /path/to/file.jpg?inline
 ```
 
-这样可以避免同一张图片因为不同查询参数产生多份缓存。`?inline` 只会改写 Worker 返回的响应头，不会修改上游对象，也不会额外生成一份缓存。
+这样可以避免同一个对象因为不同查询参数产生多份缓存。
+
+如果 `FORCE_QUERY_NORMALIZATION=false`，则在移除内部 `is_cache` / `inline` 标记后，会保留其余查询参数。比如 `/path/to/file.jpg`、`/path/to/file.jpg?v=1`、`/path/to/file.jpg?foo=bar` 会成为三个不同的缓存键。
 
 ## 强制刷新缓存
 
@@ -221,11 +196,13 @@ npm run deploy
 - 支持 `GET` 和 `HEAD`
 - `200` 响应缓存 7 天：`public, max-age=604800`
 - `400` 和 `404` 响应缓存 30 分钟：`public, max-age=1800`
+- 默认启用 `APACHE_ERROR_PAGE=true`，上游错误不透传原始 XML 错误体，而是统一返回 Apache 风格错误页
 - 命中缓存时会重新写入缓存，用滑动过期方式延长热门资源存活时间
 - `Range` 请求会直连上游对象存储，不写入缓存
-- 图片请求会忽略查询参数，用于规范化缓存 key
+- 默认启用查询参数强制归一化；设 `FORCE_QUERY_NORMALIZATION=false` 可关闭
 - `?inline` 会把 `Content-Disposition` 改写为 `inline`，但不改变缓存条目
 - 可选通过 `CORS_ALLOW_ORIGIN` 启用 CORS
+- 默认启用出站响应头清洗；设 `SANITIZE_RESPONSE_HEADERS=false` 可关闭
 - 可选通过 `x-cache-refresh-key` 强制刷新缓存
 
 ## 为什么需要这个项目？

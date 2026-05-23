@@ -13,6 +13,7 @@ It supports Aliyun OSS native signing and a read-only S3-compatible provider usi
 - Select provider with `OSS_PROVIDER=aliyun` or `OSS_PROVIDER=s3`
 - Cache `200` responses in `caches.default`
 - Cache `400` and `404` responses for 30 minutes
+- Mask upstream OSS / S3 XML errors behind an Apache-style error page
 - 7-day Worker Cache TTL for successful responses by default
 - Sliding cache renewal on cache hits
 - Optional metadata/debug endpoint via `?is_cache`
@@ -59,47 +60,13 @@ Other optional variables:
 | --- | --- | --- |
 | `CACHE_REFRESH_KEY` | Secret | Enables force-refresh when provided |
 | `CORS_ALLOW_ORIGIN` | Variable | Empty/unset disables CORS; use `*` or a specific origin to enable it |
+| `FORCE_QUERY_NORMALIZATION` | Variable | Enabled by default. Set to `false` to preserve non-internal query parameters in cache keys and upstream requests. |
+| `APACHE_ERROR_PAGE` | Variable | Enabled by default. Set to `false` to disable the Apache-style error page and return the original upstream error response for debugging. |
+| `SANITIZE_RESPONSE_HEADERS` | Variable | Enabled by default. Set to `false` to pass upstream response headers through without whitelist filtering. |
 
 Access keys such as `OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, `OSS_SESSION_TOKEN`, and `CACHE_REFRESH_KEY` should be set as **Secrets** in the Cloudflare dashboard. If you also want to hide bucket information, you can set endpoint and bucket variables as Secrets too. The code reads them the same way.
 
-You can also set Secrets with Wrangler:
-
-```bash
-npx wrangler secret put OSS_ACCESS_KEY_ID
-npx wrangler secret put OSS_ACCESS_KEY_SECRET
-npx wrangler secret put OSS_SESSION_TOKEN
-npx wrangler secret put CACHE_REFRESH_KEY
-```
-
 For local development, create a `.dev.vars` file in the project root.
-
-Aliyun example:
-
-```env
-OSS_PROVIDER=aliyun
-OSS_BASE_URL=https://your-bucket.oss-cn-hangzhou.aliyuncs.com/
-OSS_BUCKET=your-bucket
-OSS_ACCESS_KEY_ID=xxx
-OSS_ACCESS_KEY_SECRET=xxx
-# Optional. If empty or unset, the cache refresh feature is disabled.
-CACHE_REFRESH_KEY=your-refresh-key
-CORS_ALLOW_ORIGIN=
-```
-
-S3-compatible example:
-
-```env
-OSS_PROVIDER=s3
-OSS_BASE_URL=https://s3.us-east-1.amazonaws.com/
-OSS_BUCKET=your-bucket
-OSS_REGION=us-east-1
-OSS_ACCESS_KEY_ID=xxx
-OSS_ACCESS_KEY_SECRET=xxx
-OSS_FORCE_PATH_STYLE=false
-# Optional. If empty or unset, the cache refresh feature is disabled.
-CACHE_REFRESH_KEY=your-refresh-key
-CORS_ALLOW_ORIGIN=
-```
 
 `CACHE_REFRESH_KEY` is optional. If it is empty or not configured, refresh requests are ignored.
 
@@ -119,6 +86,10 @@ http://localhost:8787/path/to/file.jpg
 ```
 
 The Worker signs the upstream storage request, fetches the private object, stores `200` responses for 7 days and `400`/`404` responses for 30 minutes in `caches.default`, and returns the result.
+
+When `APACHE_ERROR_PAGE=true`, the Worker does not pass the original OSS / S3 XML body through on error responses. Instead, it returns a unified Apache 2.4-style error page (with a randomized OS tag like Ubuntu, CentOS, or Arch) to reduce storage fingerprint leakage.
+
+If you need to debug upstream signing, permissions, or missing objects, temporarily set `APACHE_ERROR_PAGE=false` to inspect the original error response.
 
 The response header `x-worker-cache` indicates cache status:
 
@@ -156,9 +127,11 @@ Example response:
 }
 ```
 
-## Query Parameter Handling for Images
+## Query Parameter Handling
 
-Image requests ignore query parameters for cache key normalization. `is_cache` is treated as a debug flag, and `inline` forces `Content-Disposition: inline` on the Worker response.
+`is_cache` is treated as a debug flag, and `inline` forces `Content-Disposition: inline` on the Worker response. These internal parameters are never part of the cache key.
+
+By default, all remaining query parameters are stripped for cache key normalization and upstream fetching. Set `FORCE_QUERY_NORMALIZATION=false` to disable this behavior.
 
 These URLs share the same cache entry and request the same upstream object:
 
@@ -170,7 +143,9 @@ These URLs share the same cache entry and request the same upstream object:
 /path/to/file.jpg?inline
 ```
 
-`?inline` only rewrites the response header returned by the Worker. It does not change the upstream object or create a separate cache entry.
+It does not change the upstream object or create a separate cache entry. 
+
+If `FORCE_QUERY_NORMALIZATION=false`, non-internal query parameters are preserved after removing `is_cache` and `inline`. For example, `/path/to/file.jpg`, `/path/to/file.jpg?v=1`, and `/path/to/file.jpg?foo=bar` become three different cache keys.
 
 ## Force Refresh Cache
 
@@ -223,11 +198,13 @@ npm run deploy
 - Supports `GET` and `HEAD`
 - Caches `200` responses for 7 days: `public, max-age=604800`
 - Caches `400` and `404` responses for 30 minutes: `public, max-age=1800`
+- `APACHE_ERROR_PAGE=true` by default, masking upstream error bodies behind a unified Apache-style error page
 - Cache hits are written back to cache to extend lifetime for hot objects
 - `Range` requests are proxied directly to upstream storage and are not cached
-- Image query parameters are ignored for cache key normalization
+- Query-parameter stripping is enabled by default; set `FORCE_QUERY_NORMALIZATION=false` to disable it
 - `?inline` rewrites `Content-Disposition` to `inline` without changing the cache entry
 - Optional CORS support through `CORS_ALLOW_ORIGIN`
+- Response header sanitization is enabled by default; set `SANITIZE_RESPONSE_HEADERS=false` to disable it
 - Optional cache refresh through `x-cache-refresh-key`
 
 ## Why Use This?

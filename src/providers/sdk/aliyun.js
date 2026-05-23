@@ -1,3 +1,5 @@
+import { requireConfig } from "../../utils.js";
+
 const OSS_AUTH_PREFIX = "OSS";
 const encoder = new TextEncoder();
 
@@ -53,14 +55,10 @@ export function createAliyunClient(config = {}) {
 export async function signOssRequest(url, env, options = {}) {
   const accessKeyId = String(env.accessKeyId || env.OSS_ACCESS_KEY_ID || "").trim();
   const accessKeySecret = String(env.accessKeySecret || env.secretAccessKey || env.OSS_ACCESS_KEY_SECRET || "").trim();
-  const missing = [
+  requireConfig([
     ["OSS_ACCESS_KEY_ID", accessKeyId],
     ["OSS_ACCESS_KEY_SECRET", accessKeySecret],
-  ].filter(([, value]) => !value).map(([key]) => key);
-
-  if (missing.length > 0) {
-    throw new Error(`Missing OSS config: ${missing.join(", ")}`);
-  }
+  ]);
 
   const requestUrl = typeof url === "string" ? new URL(url) : new URL(url.toString());
   const method = (options.method || "GET").toUpperCase();
@@ -85,10 +83,7 @@ export async function signOssRequest(url, env, options = {}) {
 
 export function buildAliyunObjectUrl(config = {}, key, search = "") {
   const baseUrl = String(config.endpoint || config.baseUrl || config.OSS_BASE_URL || "").trim();
-
-  if (!baseUrl) {
-    throw new Error("Missing OSS config: OSS_BASE_URL");
-  }
+  requireConfig([["OSS_BASE_URL", baseUrl]]);
 
   const url = new URL(baseUrl);
   const basePath = url.pathname.endsWith("/") ? url.pathname : `${url.pathname}/`;
