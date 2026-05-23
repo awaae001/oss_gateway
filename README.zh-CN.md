@@ -8,13 +8,24 @@
 
 - 通过 Cloudflare Worker 代理 Aliyun OSS 私有对象
 - OSS Bucket 可以保持私有，无需开启公共读
-- 成功的 `200` 响应会写入 `caches.default`
-- 默认 Worker Cache TTL 为 7 天
+- `200` 响应会写入 `caches.default`
+- `400` 和 `404` 响应会缓存 30 分钟
+- 成功响应默认 Worker Cache TTL 为 7 天
 - 缓存命中时自动续期，热门资源更容易留在边缘缓存中
 - 支持通过 `?is_cache` 查看缓存和资源元数据
 - 可选支持通过请求头强制刷新缓存
 - 可选支持 CORS 跨域响应头
 - 不依赖 Aliyun Node.js SDK
+
+## 注意事项
+
+Cloudflare Worker Cache 是边缘缓存，不是永久存储。即使设置了 7 天 TTL，资源也可能因为边缘节点缓存压力被提前淘汰。
+
+> [!NOTE]
+> Worker Cache 只存在于处理该请求的 Cloudflare 边缘节点 / 数据中心内，不会自动跨节点或跨地区同步。同一个资源在不同 CF 节点上可能分别出现 `MISS`，需要各自回源后才会在对应节点命中缓存。
+
+如果用于生产环境，建议结合 Cloudflare WAF、Rate Limiting、签名 URL 等方式进一步降低滥用和盗刷风险。
+
 
 ## 配置
 
@@ -77,7 +88,7 @@ npm run dev
 http://localhost:8787/path/to/file.jpg
 ```
 
-Worker 会对 OSS 请求进行签名，读取私有对象，将成功的 `200` 响应写入 `caches.default`，然后把文件返回给客户端。
+Worker 会对 OSS 请求进行签名，读取私有对象，将 `200` 响应缓存 7 天、`400`/`404` 响应缓存 30 分钟，然后把结果返回给客户端。
 
 响应头 `x-worker-cache` 表示缓存状态：
 
@@ -104,7 +115,14 @@ http://localhost:8787/path/to/file.jpg?is_cache
   "contentLength": "12345",
   "etag": "...",
   "lastModified": "...",
-  "cacheControl": "public, max-age=604800"
+  "cacheControl": "public, max-age=604800",
+  "node": {
+    "type": "edge",
+    "colo": "NRT",
+    "country": "JP",
+    "region": "Tokyo",
+    "city": "Tokyo"
+  }
 }
 ```
 
@@ -172,14 +190,13 @@ npm run deploy
 ## 当前缓存策略
 
 - 支持 `GET` 和 `HEAD`
-- 默认只缓存 `200` 响应
-- Worker Cache TTL 固定为 7 天：`public, max-age=604800`
+- `200` 响应缓存 7 天：`public, max-age=604800`
+- `400` 和 `404` 响应缓存 30 分钟：`public, max-age=1800`
 - 命中缓存时会重新写入缓存，用滑动过期方式延长热门资源存活时间
 - `Range` 请求会直连 OSS，不写入缓存
 - 图片请求会忽略查询参数，用于规范化缓存 key
 - 可选通过 `CORS_ALLOW_ORIGIN` 启用 CORS
 - 可选通过 `x-cache-refresh-key` 强制刷新缓存
-- OSS 签名代码位于 `src/cache/sdk.js`，不依赖 Aliyun Node.js SDK
 
 ## 为什么需要这个项目？
 
@@ -193,8 +210,3 @@ Client -> Cloudflare Worker -> Private Aliyun OSS
 
 这样可以在保持 OSS 私有的同时，利用 Cloudflare 边缘节点缓存资源，并在 Worker 中扩展自定义访问控制、缓存刷新、元数据调试、CORS、防盗刷等逻辑。
 
-## 注意事项
-
-Cloudflare Worker Cache 是边缘缓存，不是永久存储。即使设置了 7 天 TTL，资源也可能因为边缘节点缓存压力被提前淘汰。
-
-如果用于生产环境，建议结合 Cloudflare WAF、Rate Limiting、签名 URL 等方式进一步降低滥用和盗刷风险。

@@ -1,17 +1,13 @@
-import { signOssRequest } from "./sdk.js";
+import { signOssRequest } from "../providers/aliyun.js";
 
 const CACHE_TTL = 604800;
+const CLIENT_ERROR_CACHE_TTL = 1800;
+const CACHEABLE_STATUSES = new Set([200, 400, 404]);
 const REFRESH_HEADER = "x-cache-refresh-key";
 
 export async function fetchWithCache(request, upstreamUrl, ctx, env = {}) {
   const method = request.method.toUpperCase();
 
-  if (method !== "GET" && method !== "HEAD") {
-    return new Response("Method Not Allowed", {
-      status: 405,
-      headers: { allow: "GET, HEAD" },
-    });
-  }
   if (request.headers.has("range")) {
     return fetch(await createOssRequest(upstreamUrl, method, request.headers, env));
   }
@@ -39,7 +35,7 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}) {
   const upstreamResponse = await fetch(await createOssRequest(upstreamUrl, method, request.headers, env));
   const headers = new Headers(upstreamResponse.headers);
 
-  headers.set("cache-control", `public, max-age=${CACHE_TTL}`);
+  headers.set("cache-control", `public, max-age=${getCacheTtl(upstreamResponse.status)}`);
 
   const response = new Response(upstreamResponse.body, {
     status: upstreamResponse.status,
@@ -47,32 +43,23 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}) {
     headers,
   });
 
-  if (response.status === 200) {
+  if (CACHEABLE_STATUSES.has(response.status)) {
     ctx.waitUntil(cache.put(cacheKey, response.clone()));
   }
 
   return withCacheHeader(response, shouldRefresh ? "REFRESH" : "MISS", method);
 }
 
-export async function getImageMetadata(request, upstreamUrl, env = {}) {
-  const method = request.method.toUpperCase();
-
-  if (method !== "GET" && method !== "HEAD") {
-    return new Response("Method Not Allowed", {
-      status: 405,
-      headers: { allow: "GET, HEAD" },
-    });
-  }
-
+export async function getImageMetadata(request, upstreamUrl, env = {}, originalRequest = request) {
   const cacheKey = new Request(request.url, { method: "GET" });
   const cached = await caches.default.match(cacheKey);
 
   if (cached) {
-    return jsonMetadata("HIT", request.url, cached.status, cached.headers);
+    return jsonMetadata("HIT", request.url, cached.status, cached.headers, originalRequest);
   }
 
   const upstreamResponse = await fetch(await createOssRequest(upstreamUrl, "HEAD", request.headers, env));
-  return jsonMetadata("MISS", request.url, upstreamResponse.status, upstreamResponse.headers);
+  return jsonMetadata("MISS", request.url, upstreamResponse.status, upstreamResponse.headers, originalRequest);
 }
 
 async function createOssRequest(upstreamUrl, method, requestHeaders, env) {
@@ -93,7 +80,7 @@ function pickRequestHeaders(headers) {
 
 function withCacheTtl(response) {
   const headers = new Headers(response.headers);
-  headers.set("cache-control", `public, max-age=${CACHE_TTL}`);
+  headers.set("cache-control", `public, max-age=${getCacheTtl(response.status)}`);
 
   return new Response(response.body, {
     status: response.status,
@@ -102,7 +89,11 @@ function withCacheTtl(response) {
   });
 }
 
-function jsonMetadata(cacheStatus, url, status, headers) {
+function getCacheTtl(status) {
+  return status === 400 || status === 404 ? CLIENT_ERROR_CACHE_TTL : CACHE_TTL;
+}
+
+function jsonMetadata(cacheStatus, url, status, headers, request) {
   return new Response(JSON.stringify({
     cache: cacheStatus,
     url,
@@ -112,12 +103,40 @@ function jsonMetadata(cacheStatus, url, status, headers) {
     etag: headers.get("etag"),
     lastModified: headers.get("last-modified"),
     cacheControl: headers.get("cache-control"),
+    node: getCfNode(request),
+    request: getCfRequest(request),
   }), {
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
     },
   });
+}
+
+function getCfNode(request) {
+  const cf = request.cf || {};
+
+  return {
+    type: request.cf ? "edge" : "local",
+    colo: cf.colo || null,
+    country: cf.country || null,
+    region: cf.region || null,
+    regionCode: cf.regionCode || null,
+    city: cf.city || null,
+    continent: cf.continent || null,
+    timezone: cf.timezone || null,
+  };
+}
+
+function getCfRequest(request) {
+  const cf = request.cf || {};
+
+  return {
+    httpProtocol: cf.httpProtocol || null,
+    tlsVersion: cf.tlsVersion || null,
+    asn: cf.asn || null,
+    asOrganization: cf.asOrganization || null,
+  };
 }
 
 function withCacheHeader(response, cacheStatus, method) {

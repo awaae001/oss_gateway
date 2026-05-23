@@ -10,13 +10,24 @@ This project implements Aliyun OSS request signing directly with Web APIs, so it
 
 - Proxy private Aliyun OSS objects through Cloudflare Worker
 - Keep OSS bucket private; no public read access required
-- Cache successful `200` responses in `caches.default`
-- 7-day Worker Cache TTL by default
+- Cache `200` responses in `caches.default`
+- Cache `400` and `404` responses for 30 minutes
+- 7-day Worker Cache TTL for successful responses by default
 - Sliding cache renewal on cache hits
 - Optional metadata/debug endpoint via `?is_cache`
 - Optional cache refresh via request header
 - Optional CORS support
 - No Aliyun Node.js SDK dependency
+
+## Notes
+
+Cloudflare Worker Cache is an edge cache, not permanent storage. Objects may be evicted before the configured TTL under cache pressure.
+
+> [!NOTE]
+> Worker Cache is local to the Cloudflare edge node / data center that handles the request. It is not automatically replicated across nodes or regions. The same object may be a `MISS` on different CF nodes until each node fetches it from origin and stores its own cache entry.
+
+For production use, consider combining this Worker with Cloudflare WAF, rate limiting, and signed URLs if you need stronger anti-abuse protection.
+
 
 ## Configuration
 
@@ -79,7 +90,7 @@ Access an OSS object through the Worker:
 http://localhost:8787/path/to/file.jpg
 ```
 
-The Worker signs the OSS request, fetches the private object, stores successful `200` responses in `caches.default`, and returns the file.
+The Worker signs the OSS request, fetches the private object, stores `200` responses for 7 days and `400`/`404` responses for 30 minutes in `caches.default`, and returns the result.
 
 The response header `x-worker-cache` indicates cache status:
 
@@ -106,7 +117,14 @@ Example response:
   "contentLength": "12345",
   "etag": "...",
   "lastModified": "...",
-  "cacheControl": "public, max-age=604800"
+  "cacheControl": "public, max-age=604800",
+  "node": {
+    "type": "edge",
+    "colo": "NRT",
+    "country": "JP",
+    "region": "Tokyo",
+    "city": "Tokyo"
+  }
 }
 ```
 
@@ -172,14 +190,13 @@ npm run deploy
 ## Current Cache Strategy
 
 - Supports `GET` and `HEAD`
-- Caches only `200` responses by default
-- Worker Cache TTL is fixed to 7 days: `public, max-age=604800`
+- Caches `200` responses for 7 days: `public, max-age=604800`
+- Caches `400` and `404` responses for 30 minutes: `public, max-age=1800`
 - Cache hits are written back to cache to extend lifetime for hot objects
 - `Range` requests are proxied directly to OSS and are not cached
 - Image query parameters are ignored for cache key normalization
 - Optional CORS support through `CORS_ALLOW_ORIGIN`
 - Optional cache refresh through `x-cache-refresh-key`
-- OSS signing is implemented in `src/cache/sdk.js` without the Aliyun Node.js SDK
 
 ## Why Use This?
 
@@ -193,4 +210,9 @@ This helps reduce direct OSS exposure, enables Cloudflare edge caching, and give
 
 ## Notes
 
-Cloudflare Worker Cache is an edge cache, not permanent storage. Objects may be evicted before the configured TTL under cache pressure. For production use, consider combining this Worker with Cloudflare WAF, rate limiting, and signed URLs if you need stronger anti-abuse protection.
+Cloudflare Worker Cache is an edge cache, not permanent storage. Objects may be evicted before the configured TTL under cache pressure.
+
+> [!NOTE]
+> Worker Cache is local to the Cloudflare edge node / data center that handles the request. It is not automatically replicated across nodes or regions. The same object may be a `MISS` on different CF nodes until each node fetches it from origin and stores its own cache entry.
+
+For production use, consider combining this Worker with Cloudflare WAF, rate limiting, and signed URLs if you need stronger anti-abuse protection.
