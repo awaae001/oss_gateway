@@ -1,15 +1,15 @@
-import { signOssRequest } from "../providers/aliyun.js";
+import { createStorageClient } from "../providers/index.js";
 
 const CACHE_TTL = 604800;
 const CLIENT_ERROR_CACHE_TTL = 1800;
 const CACHEABLE_STATUSES = new Set([200, 400, 404]);
 const REFRESH_HEADER = "x-cache-refresh-key";
 
-export async function fetchWithCache(request, upstreamUrl, ctx, env = {}) {
+export async function fetchWithCache(request, upstreamUrl, ctx, env = {}, storageClient = createStorageClient(env)) {
   const method = request.method.toUpperCase();
 
   if (request.headers.has("range")) {
-    return fetch(await createOssRequest(upstreamUrl, method, request.headers, env));
+    return fetch(await createStorageRequest(upstreamUrl, method, request.headers, storageClient));
   }
 
   const cache = caches.default;
@@ -32,7 +32,7 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}) {
     }
   }
 
-  const upstreamResponse = await fetch(await createOssRequest(upstreamUrl, method, request.headers, env));
+  const upstreamResponse = await fetch(await createStorageRequest(upstreamUrl, method, request.headers, storageClient));
   const headers = new Headers(upstreamResponse.headers);
 
   headers.set("cache-control", `public, max-age=${getCacheTtl(upstreamResponse.status)}`);
@@ -50,7 +50,7 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}) {
   return withCacheHeader(response, shouldRefresh ? "REFRESH" : "MISS", method);
 }
 
-export async function getImageMetadata(request, upstreamUrl, env = {}, originalRequest = request) {
+export async function getImageMetadata(request, upstreamUrl, env = {}, originalRequest = request, storageClient = createStorageClient(env)) {
   const cacheKey = new Request(request.url, { method: "GET" });
   const cached = await caches.default.match(cacheKey);
 
@@ -58,14 +58,14 @@ export async function getImageMetadata(request, upstreamUrl, env = {}, originalR
     return jsonMetadata("HIT", request.url, cached.status, cached.headers, originalRequest);
   }
 
-  const upstreamResponse = await fetch(await createOssRequest(upstreamUrl, "HEAD", request.headers, env));
+  const upstreamResponse = await fetch(await createStorageRequest(upstreamUrl, "HEAD", request.headers, storageClient));
   return jsonMetadata("MISS", request.url, upstreamResponse.status, upstreamResponse.headers, originalRequest);
 }
 
-async function createOssRequest(upstreamUrl, method, requestHeaders, env) {
+async function createStorageRequest(upstreamUrl, method, requestHeaders, storageClient) {
   const headers = pickRequestHeaders(requestHeaders);
 
-  return signOssRequest(upstreamUrl, env, { method, headers });
+  return storageClient.signedObjectRequest("", { url: upstreamUrl, method, headers });
 }
 
 function pickRequestHeaders(headers) {

@@ -1,4 +1,5 @@
 import { fetchWithCache, getImageMetadata } from "../cache/index.js";
+import { createStorageClient } from "../providers/index.js";
 
 const IMAGE_EXTENSION_RE = /\.(avif|bmp|gif|heic|ico|jpe?g|png|svg|webp)$/i;
 const ROUTER_MIDDLEWARES = [
@@ -41,8 +42,10 @@ function methodMiddleware(routerContext) {
 }
 
 function configMiddleware(routerContext) {
-  if (!routerContext.env.OSS_BASE_URL) {
-    routerContext.response = json({ error: "Missing OSS_BASE_URL" }, 500);
+  try {
+    routerContext.storageClient = createStorageClient(routerContext.env);
+  } catch (error) {
+    routerContext.response = json({ error: error.message }, 500);
   }
 }
 
@@ -59,52 +62,61 @@ function objectKeyMiddleware(routerContext) {
 function normalizeRequestMiddleware(routerContext) {
   const { url, request } = routerContext;
   const isMetadataRequest = url.searchParams.has("is_cache");
+  const forceInline = url.searchParams.has("inline");
   const isImageRequest = IMAGE_EXTENSION_RE.test(url.pathname);
 
   if (isMetadataRequest) {
     url.searchParams.delete("is_cache");
+  }
+  if (forceInline) {
+    url.searchParams.delete("inline");
   }
   if (isImageRequest) {
     url.search = "";
   }
 
   routerContext.isMetadataRequest = isMetadataRequest;
+  routerContext.forceInline = forceInline;
   routerContext.normalizedRequest = new Request(url.toString(), request);
 }
 
 function upstreamMiddleware(routerContext) {
-  routerContext.upstreamUrl = buildOssUrl(
-    routerContext.env.OSS_BASE_URL,
-    routerContext.objectKey,
-    routerContext.url.search,
-  );
+  try {
+    routerContext.upstreamUrl = routerContext.storageClient.objectUrl(
+      routerContext.objectKey,
+      routerContext.url.search,
+    );
+  } catch (error) {
+    routerContext.response = json({ error: error.message }, 500);
+  }
 }
 
 async function responseMiddleware(routerContext) {
-  const { normalizedRequest, upstreamUrl, env, ctx } = routerContext;
+  const { normalizedRequest, upstreamUrl, env, ctx, storageClient } = routerContext;
 
-  routerContext.response = routerContext.isMetadataRequest
-    ? await getImageMetadata(normalizedRequest, upstreamUrl, env, routerContext.request)
-    : await fetchWithCache(normalizedRequest, upstreamUrl, ctx, env);
+  const response = routerContext.isMetadataRequest
+    ? await getImageMetadata(normalizedRequest, upstreamUrl, env, routerContext.request, storageClient)
+    : await fetchWithCache(normalizedRequest, upstreamUrl, ctx, env, storageClient);
+
+  routerContext.response = routerContext.forceInline && !routerContext.isMetadataRequest
+    ? withInlineDisposition(response)
+    : response;
 }
 
-function buildOssUrl(baseUrl, objectKey, search) {
-  const upstream = new URL(baseUrl);
-  const basePath = upstream.pathname.endsWith("/") ? upstream.pathname : `${upstream.pathname}/`;
+function withInlineDisposition(response) {
+  const headers = new Headers(response.headers);
+  const disposition = headers.get("content-disposition");
 
-  upstream.pathname = `${basePath}${encodeObjectKey(objectKey)}`;
-  upstream.search = search;
-  return upstream.toString();
-}
+  headers.set(
+    "content-disposition",
+    disposition ? disposition.replace(/^attachment/i, "inline") : "inline",
+  );
 
-function encodeObjectKey(objectKey) {
-  return objectKey.split("/").map((part) => {
-    try {
-      return encodeURIComponent(decodeURIComponent(part));
-    } catch {
-      return encodeURIComponent(part);
-    }
-  }).join("/");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function json(data, status = 200) {

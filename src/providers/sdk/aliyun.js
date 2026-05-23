@@ -28,6 +28,22 @@ const OSS_SUBRESOURCES = new Set([
 ]);
 
 /**
+ * Minimal read-only Aliyun OSS client for Worker/edge runtimes.
+ */
+export function createAliyunClient(config = {}) {
+  return {
+    objectUrl(key, search = "") {
+      return buildAliyunObjectUrl(config, key, search);
+    },
+
+    signedObjectRequest(key, options = {}) {
+      const url = options.url || buildAliyunObjectUrl(config, key, options.search || "");
+      return signOssRequest(url, config, options);
+    },
+  };
+}
+
+/**
  * Creates a signed request for accessing a private Aliyun OSS object.
  *
  * This implementation uses the OSS-compatible Authorization header signing
@@ -35,8 +51,8 @@ const OSS_SUBRESOURCES = new Set([
  * Workers and other non-Node.js edge runtimes.
  */
 export async function signOssRequest(url, env, options = {}) {
-  const accessKeyId = String(env.OSS_ACCESS_KEY_ID || "").trim();
-  const accessKeySecret = String(env.OSS_ACCESS_KEY_SECRET || "").trim();
+  const accessKeyId = String(env.accessKeyId || env.OSS_ACCESS_KEY_ID || "").trim();
+  const accessKeySecret = String(env.accessKeySecret || env.secretAccessKey || env.OSS_ACCESS_KEY_SECRET || "").trim();
   const missing = [
     ["OSS_ACCESS_KEY_ID", accessKeyId],
     ["OSS_ACCESS_KEY_SECRET", accessKeySecret],
@@ -53,7 +69,7 @@ export async function signOssRequest(url, env, options = {}) {
 
   headers.set("date", date);
 
-  const bucket = env.OSS_BUCKET || requestUrl.hostname.split(".")[0];
+  const bucket = env.bucket || env.OSS_BUCKET || requestUrl.hostname.split(".")[0];
   const canonicalizedResource = `/${bucket}${canonicalPath(requestUrl.pathname)}${canonicalSubresources(requestUrl.searchParams)}`;
   const stringToSign = `${method}\n${headers.get("content-md5") || ""}\n${headers.get("content-type") || ""}\n${date}\n${canonicalizedOssHeaders(headers)}${canonicalizedResource}`;
 
@@ -65,6 +81,30 @@ export async function signOssRequest(url, env, options = {}) {
     headers,
     body: options.body,
   });
+}
+
+export function buildAliyunObjectUrl(config = {}, key, search = "") {
+  const baseUrl = String(config.endpoint || config.baseUrl || config.OSS_BASE_URL || "").trim();
+
+  if (!baseUrl) {
+    throw new Error("Missing OSS config: OSS_BASE_URL");
+  }
+
+  const url = new URL(baseUrl);
+  const basePath = url.pathname.endsWith("/") ? url.pathname : `${url.pathname}/`;
+  url.pathname = `${basePath}${encodeOssObjectKey(String(key || "").replace(/^\/+/, ""))}`;
+  url.search = search ? (String(search).startsWith("?") ? String(search) : `?${search}`) : "";
+  return url.toString();
+}
+
+function encodeOssObjectKey(objectKey) {
+  return objectKey.split("/").map((part) => {
+    try {
+      return encodeURIComponent(decodeURIComponent(part));
+    } catch {
+      return encodeURIComponent(part);
+    }
+  }).join("/");
 }
 
 function canonicalPath(pathname) {
