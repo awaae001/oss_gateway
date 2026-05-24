@@ -72,14 +72,14 @@ export async function signS3ObjectRequest(url, config = {}, options = {}) {
     ALGORITHM,
     amzDate,
     credentialScope,
-    await sha256Hex(canonicalRequest),
+    [...new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(canonicalRequest)))].map((byte) => byte.toString(16).padStart(2, "0")).join(""),
   ].join("\n");
 
   const dateKey = await hmac(`AWS4${secretAccessKey}`, date);
   const regionKey = await hmac(dateKey, region);
   const serviceKey = await hmac(regionKey, SERVICE);
   const signingKey = await hmac(serviceKey, "aws4_request");
-  const signature = hex(await hmac(signingKey, stringToSign));
+  const signature = [...await hmac(signingKey, stringToSign)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
   headers.set(
     "authorization",
@@ -123,14 +123,6 @@ function encodePath(pathname) {
   }).join("/");
 }
 
-function awsEncode(value) {
-  return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
-}
-
-async function sha256Hex(value) {
-  return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value))));
-}
-
 async function hmac(key, value) {
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
@@ -142,6 +134,6 @@ async function hmac(key, value) {
   return new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(value)));
 }
 
-function hex(bytes) {
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+function awsEncode(value) {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
