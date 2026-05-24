@@ -104,6 +104,11 @@ async function responseMiddleware(routerContext) {
       ? await getImageMetadata(normalizedRequest, upstreamUrl, env, routerContext.request, storageClient)
       : await fetchWithCache(normalizedRequest, upstreamUrl, ctx, env, storageClient);
 
+    if (await isBucketListing(response)) {
+      routerContext.response = json({ error: "Forbidden" }, 403);
+      return;
+    }
+
     routerContext.response = routerContext.forceInline && !routerContext.isMetadataRequest
       ? withInlineDisposition(response)
       : response;
@@ -132,4 +137,22 @@ function withInlineDisposition(response) {
   );
 
   return rebuildResponse(response, { headers });
+}
+
+/**
+ * Detects upstream bucket listing responses (OSS/S3 ListBucketResult XML)
+ * and forces a 403 to avoid exposing the bucket contents.
+ */
+async function isBucketListing(response) {
+  if (!response || response.status !== 200) return false;
+
+  const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+  if (!contentType.startsWith("application/xml") && !contentType.startsWith("text/xml")) return false;
+
+  try {
+    const body = await response.clone().text();
+    return body.includes("<ListBucketResult");
+  } catch {
+    return false;
+  }
 }
