@@ -39,7 +39,7 @@ export function withErrorPage(response, request, env = {}) {
   }
 
   return rebuildResponse(response, {
-    body: request.method.toUpperCase() === "HEAD" ? null : renderErrorPage(status, statusText, request),
+    body: request.method.toUpperCase() === "HEAD" ? null : renderErrorPage(status, statusText),
     headers,
   });
 }
@@ -65,10 +65,10 @@ function getStatusText(status, fallback) {
   return String(ERROR_STATUS_TEXTS.get(status) || fallback || "Error").trim();
 }
 
-function renderErrorPage(status, statusText, request) {
+function renderErrorPage(status, statusText) {
   const title = `${status} ${statusText}`;
   const message = getStatusMessage(status);
-  const address = getServerAddress(request);
+  const address = `Apache/2.4.41 (${randomOsLabel()}) Server at ${Array.from(crypto.getRandomValues(new Uint8Array(4))).join(".")} Port 443`;
 
   return `<!DOCTYPE html PUBLIC "-//IETF//DTD HTML 2.0//EN">
 <html>
@@ -85,15 +85,8 @@ function renderErrorPage(status, statusText, request) {
 </html>`;
 }
 
-function getServerAddress(request) {
-  const url = new URL(request.url);
-  const port = url.port || (url.protocol === "https:" ? "443" : "80");
-
-  return `Apache/2.4.41 (${randomOsLabel()}) Server at ${url.hostname} Port ${port}`;
-}
-
 function randomOsLabel() {
-  const options = ["Ubuntu", "CentOS", "Arch"];
+  const options = ["Ubuntu", "CentOS", "ArchOS","GithubAction"];
   const index = crypto.getRandomValues(new Uint8Array(1))[0] % options.length;
   return options[index];
 }

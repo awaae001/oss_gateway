@@ -13,7 +13,7 @@ It supports Aliyun OSS native signing and a read-only S3-compatible provider usi
 - Select provider with `OSS_PROVIDER=aliyun` or `OSS_PROVIDER=s3`
 - Cache `200` responses in `caches.default`
 - Cache `400` and `404` responses for 30 minutes
-- Mask upstream OSS / S3 XML errors behind an Apache-style error page
+- Mask upstream OSS / S3 XML errors behind an Apache-style error page with randomized OS label and random IP address
 - 7-day Worker Cache TTL for successful responses by default
 - Sliding cache renewal on cache hits
 - Optional metadata/debug endpoint via `?is_cache`
@@ -86,7 +86,7 @@ http://localhost:8787/path/to/file.jpg
 
 The Worker signs the upstream storage request, fetches the private object, stores `200` responses for 7 days and `400`/`404` responses for 30 minutes in `caches.default`, and returns the result.
 
-When `APACHE_ERROR_PAGE=true`, the Worker does not pass the original OSS / S3 XML body through on error responses. Instead, it returns a unified Apache 2.4-style error page (with a randomized OS tag like Ubuntu, CentOS, or Arch) to reduce storage fingerprint leakage.
+When `APACHE_ERROR_PAGE=true`, the Worker does not pass the original OSS / S3 XML body through on error responses. Instead, it returns a unified Apache 2.4-style error page (with a randomized OS tag like Ubuntu, CentOS, or Arch and a random IP address) to reduce storage fingerprint leakage.
 
 If you need to debug upstream signing, permissions, or missing objects, temporarily set `APACHE_ERROR_PAGE=false` to inspect the original error response.
 
@@ -194,7 +194,7 @@ npm run deploy
 - Supports `GET` and `HEAD`
 - Caches `200` responses for 7 days: `public, max-age=604800`
 - Caches `400` and `404` responses for 30 minutes: `public, max-age=1800`
-- `APACHE_ERROR_PAGE=true` by default, masking upstream error bodies behind a unified Apache-style error page
+- `APACHE_ERROR_PAGE=true` by default, masking upstream error bodies behind a unified Apache-style error page with random OS and IP
 - Cache hits are written back to cache to extend lifetime for hot objects
 - `Range` requests are proxied directly to upstream storage and are not cached
 - Query-parameter stripping is enabled by default; set `FORCE_QUERY_NORMALIZATION=false` to disable it

@@ -11,7 +11,7 @@
 - 支持通过 `OSS_PROVIDER=aliyun` 或 `OSS_PROVIDER=s3` 切换 Provider
 - `200` 响应会写入 `caches.default`
 - `400` 和 `404` 响应会缓存 30 分钟
-- 上游错误不透传 OSS / S3 XML，统一为 Apache 风格错误页
+- 上游错误不透传 OSS / S3 XML，统一为 Apache 风格错误页（含随机 OS 标记和随机 IP 地址）
 - 成功响应默认 Worker Cache TTL 为 7 天
 - 缓存命中时自动续期，热门资源更容易留在边缘缓存中
 - 支持通过 `?is_cache` 查看缓存和资源元数据
@@ -85,7 +85,7 @@ http://localhost:8787/path/to/file.jpg
 
 Worker 会对上游对象存储请求进行签名，读取私有对象，将 `200` 响应缓存 7 天、`400`/`404` 响应缓存 30 分钟，然后把结果返回给客户端。
 
-当 `APACHE_ERROR_PAGE=true` 时，上游返回错误时，Worker 不会直接透传 OSS / S3 原始 XML 错误体，而是改为返回统一的 Apache 2.4 风格错误页（带随机 OS 标记如 Ubuntu/CentOS/Arch 之一），避免暴露存储类型、错误码细节和部分后端指纹信息。
+当 `APACHE_ERROR_PAGE=true` 时，上游返回错误时，Worker 不会直接透传 OSS / S3 原始 XML 错误体，而是改为返回统一的 Apache 2.4 风格错误页（带随机 OS 标记如 Ubuntu/CentOS/Arch 之一，以及随机 IP 地址），避免暴露存储类型、错误码细节和部分后端指纹信息。
 
 如果需要排查上游签名、权限或对象不存在等问题，可以临时设置 `APACHE_ERROR_PAGE=false`，直接查看原始错误响应。
 
@@ -193,7 +193,7 @@ npm run deploy
 - 支持 `GET` 和 `HEAD`
 - `200` 响应缓存 7 天：`public, max-age=604800`
 - `400` 和 `404` 响应缓存 30 分钟：`public, max-age=1800`
-- 默认启用 `APACHE_ERROR_PAGE=true`，上游错误不透传原始 XML 错误体，而是统一返回 Apache 风格错误页
+- 默认启用 `APACHE_ERROR_PAGE=true`，上游错误不透传原始 XML 错误体，而是统一返回 Apache 风格错误页（含随机 OS 和随机 IP）
 - 命中缓存时会重新写入缓存，用滑动过期方式延长热门资源存活时间
 - `Range` 请求会直连上游对象存储，不写入缓存
 - 默认启用查询参数强制归一化；设 `FORCE_QUERY_NORMALIZATION=false` 可关闭
