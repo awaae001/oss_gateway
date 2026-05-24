@@ -20,7 +20,6 @@ It supports Aliyun OSS native signing and a read-only S3-compatible provider usi
 - Optional inline display override via `?inline`
 - Optional cache refresh via request header
 - Optional CORS support
-- No Aliyun Node.js SDK or AWS SDK dependency
 
 ## Notes
 
@@ -41,8 +40,8 @@ Common OSS variables:
 | Name | Recommended type | Description |
 | --- | --- | --- |
 | `OSS_PROVIDER` | Variable | `aliyun` by default. Set to `s3` for S3-compatible storage. Aliases such as `oss`, `aliyun-oss`, `aws-s3`, and `s3-compatible` are also accepted. |
-| `OSS_BASE_URL` | Secret or variable | Upstream bucket endpoint. For Aliyun OSS, use the bucket endpoint, for example `https://your-bucket.oss-cn-hangzhou.aliyuncs.com/`. For S3-compatible storage, use the service endpoint, for example `https://s3.us-east-1.amazonaws.com/`, an R2 endpoint, or a MinIO endpoint. |
-| `OSS_BUCKET` | Secret or variable | Bucket name |
+| `OSS_BASE_URL` | Secret or variable | Upstream bucket endpoint. For Aliyun OSS, use your upstream object base URL, such as a bucket endpoint or custom domain. For S3-compatible storage, use the service endpoint. |
+| `OSS_BUCKET` | Secret or variable | Bucket name. Required for ALL providers.  |
 | `OSS_ACCESS_KEY_ID` | Secret | Access key ID |
 | `OSS_ACCESS_KEY_SECRET` | Secret | Access key secret |
 
@@ -157,11 +156,8 @@ Send the refresh key through the request header:
 curl -H "x-cache-refresh-key: your-refresh-key" https://your-domain.com/path/to/file.jpg
 ```
 
-Behavior:
-
-- Correct key: delete the Worker Cache entry, fetch from upstream storage again, write the new response to cache, and return it
-- Wrong key: return `403 Forbidden`
-- Empty or missing `CACHE_REFRESH_KEY`: refresh module is disabled and the header is ignored
+> [!WARNING]
+> **Special note.** The Cache API `delete()` operation is built into the Cloudflare Workers platform itself — it only purges the cache copy on the **single edge node (PoP)** that receives the request. This is not a design choice specific to this project. Cloudflare's global network spans 330+ edge locations, each maintaining its own independent Worker Cache. When you send a refresh request, only the node that receives it actually deletes that entry — all other nodes worldwide still serve the stale copy until their local TTL expires. For globally-distributed users, most will continue hitting stale cache after a refresh. This mechanism cannot provide global synchronous purge and is not a replacement for the official Cloudflare CDN Purge API.
 
 ## CORS
 

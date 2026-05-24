@@ -1,4 +1,5 @@
 import { requireConfig } from "../../utils.js";
+import { buildObjectUrl, parseObjectBaseUrl } from "../url.js";
 
 const OSS_AUTH_PREFIX = "OSS";
 const encoder = new TextEncoder();
@@ -55,6 +56,7 @@ export function createAliyunClient(config = {}) {
 export async function signOssRequest(url, env, options = {}) {
   const accessKeyId = String(env.accessKeyId || env.OSS_ACCESS_KEY_ID || "").trim();
   const accessKeySecret = String(env.accessKeySecret || env.secretAccessKey || env.OSS_ACCESS_KEY_SECRET || "").trim();
+  const bucket = getAliyunBucketName(env);
   requireConfig([
     ["OSS_ACCESS_KEY_ID", accessKeyId],
     ["OSS_ACCESS_KEY_SECRET", accessKeySecret],
@@ -67,8 +69,7 @@ export async function signOssRequest(url, env, options = {}) {
 
   headers.set("date", date);
 
-  const bucket = env.bucket || env.OSS_BUCKET || requestUrl.hostname.split(".")[0];
-  const canonicalizedResource = `/${bucket}${canonicalPath(requestUrl.pathname)}${canonicalSubresources(requestUrl.searchParams)}`;
+  const canonicalizedResource = canonicalizedOssResource(bucket, requestUrl.pathname, requestUrl.searchParams);
   const stringToSign = `${method}\n${headers.get("content-md5") || ""}\n${headers.get("content-type") || ""}\n${date}\n${canonicalizedOssHeaders(headers)}${canonicalizedResource}`;
 
   const signature = await hmacSha1Base64(accessKeySecret, stringToSign);
@@ -83,13 +84,20 @@ export async function signOssRequest(url, env, options = {}) {
 
 export function buildAliyunObjectUrl(config = {}, key, search = "") {
   const baseUrl = String(config.endpoint || config.baseUrl || config.OSS_BASE_URL || "").trim();
+  getAliyunBucketName(config);
   requireConfig([["OSS_BASE_URL", baseUrl]]);
 
-  const url = new URL(baseUrl);
-  const basePath = url.pathname.endsWith("/") ? url.pathname : `${url.pathname}/`;
-  url.pathname = `${basePath}${encodeOssObjectKey(String(key || "").replace(/^\/+/, ""))}`;
-  url.search = search ? (String(search).startsWith("?") ? String(search) : `?${search}`) : "";
-  return url.toString();
+  return buildObjectUrl(
+    parseObjectBaseUrl(baseUrl),
+    encodeOssObjectKey(String(key || "").replace(/^\/+/, "")),
+    search,
+  );
+}
+
+function getAliyunBucketName(config = {}) {
+  const bucket = String(config.bucket || config.OSS_BUCKET || "").trim();
+  requireConfig([["OSS_BUCKET", bucket]]);
+  return bucket;
 }
 
 function encodeOssObjectKey(objectKey) {
@@ -113,6 +121,25 @@ function canonicalPath(pathname) {
       }
     })
     .join("/");
+}
+
+function canonicalizedOssResource(bucket, pathname, searchParams) {
+  return `/${bucket}${canonicalizedObjectPath(bucket, pathname)}${canonicalSubresources(searchParams)}`;
+}
+
+function canonicalizedObjectPath(bucket, pathname) {
+  const decodedPath = canonicalPath(pathname);
+  const pathStylePrefix = `/${bucket}`;
+
+  if (decodedPath === pathStylePrefix) {
+    return "";
+  }
+
+  if (decodedPath.startsWith(`${pathStylePrefix}/`)) {
+    return decodedPath.slice(pathStylePrefix.length);
+  }
+
+  return decodedPath;
 }
 
 function canonicalSubresources(searchParams) {

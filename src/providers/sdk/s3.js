@@ -1,4 +1,5 @@
 import { requireConfig } from "../../utils.js";
+import { buildObjectUrl, parseObjectBaseUrl } from "../url.js";
 
 const SERVICE = "s3";
 const ALGORITHM = "AWS4-HMAC-SHA256";
@@ -97,20 +98,17 @@ export function buildS3ObjectUrl(config = {}, key, search = "") {
     ["OSS_BUCKET", bucket],
   ]);
 
-  const url = new URL(endpoint);
+  const url = parseObjectBaseUrl(endpoint);
+
   const pathStyle = /^(1|true|yes|on)$/i.test(String(config.pathStyle ?? config.forcePathStyle ?? config.OSS_FORCE_PATH_STYLE ?? ""));
   const objectPath = encodePath(String(key || "").replace(/^\/+/, ""));
-  const basePath = url.pathname.endsWith("/") ? url.pathname : `${url.pathname}/`;
 
   if (pathStyle) {
-    url.pathname = `${basePath}${awsEncode(bucket)}/${objectPath}`;
-  } else {
-    url.hostname = `${bucket}.${url.hostname}`;
-    url.pathname = `${basePath}${objectPath}`;
+    return buildObjectUrl(url, `${awsEncode(bucket)}/${objectPath}`, search);
   }
 
-  url.search = search ? (String(search).startsWith("?") ? String(search) : `?${search}`) : "";
-  return url.toString();
+  url.hostname = `${bucket}.${url.hostname}`;
+  return buildObjectUrl(url, objectPath, search);
 }
 
 function encodePath(pathname) {

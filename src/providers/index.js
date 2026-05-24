@@ -1,3 +1,4 @@
+import { invalidConfig } from "../utils.js";
 import { createAliyunClient } from "./sdk/aliyun.js";
 import { createS3Client } from "./sdk/s3.js";
 
@@ -24,6 +25,6 @@ export function createStorageClient(config = {}) {
       };
 
     default:
-      throw new Error(`Unsupported storage provider: ${providerType}`);
+      throw invalidConfig(`Unsupported storage provider: ${providerType}`);
   }
 }

@@ -1,17 +1,22 @@
 import { withErrorPage } from "../error-page.js";
+import { createConditionalHitResponse } from "./conditional.js";
 import { createStorageClient } from "../providers/index.js";
-import { json, pickHeaders, rebuildResponse } from "../utils.js";
+import { fetchStorageResponse } from "./storage.js";
+import { json, rebuildResponse } from "../utils.js";
 
 const CACHE_TTL = 604800;
 const CLIENT_ERROR_CACHE_TTL = 1800;
 const CACHEABLE_STATUSES = new Set([200, 400, 404]);
 const REFRESH_HEADER = "x-cache-refresh-key";
 
+/**
+ * Fetches an object through the shared cache while preserving GET/HEAD semantics.
+ */
 export async function fetchWithCache(request, upstreamUrl, ctx, env = {}, storageClient = createStorageClient(env)) {
-  const method = request.method.toUpperCase();
+  const requestMethod = request.method.toUpperCase();
 
   if (request.headers.has("range")) {
-    return fetch(await createStorageRequest(upstreamUrl, method, request.headers, storageClient));
+    return fetchStorageResponse(upstreamUrl, requestMethod, request.headers, storageClient);
   }
 
   const cache = caches.default;
@@ -29,24 +34,33 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}, storag
   } else {
     const cached = await cache.match(cacheKey);
     if (cached) {
+      const conditionalResponse = createConditionalHitResponse(request, cached);
       ctx.waitUntil(cache.put(cacheKey, withCacheTtl(cached.clone())));
-      return withCacheHeader(cached, "HIT", method);
+
+      if (conditionalResponse) {
+        return withCacheHeader(conditionalResponse, "HIT", requestMethod);
+      }
+
+      return withCacheHeader(cached, "HIT", requestMethod);
     }
   }
 
-  const upstreamResponse = await fetch(await createStorageRequest(upstreamUrl, method, request.headers, storageClient));
+  const upstreamResponse = await fetchStorageResponse(upstreamUrl, requestMethod, request.headers, storageClient);
   const headers = new Headers(upstreamResponse.headers);
 
   headers.set("cache-control", `public, max-age=${getCacheTtl(upstreamResponse.status)}`);
 
   const response = withErrorPage(rebuildResponse(upstreamResponse, { headers }), request, env);
-  if (CACHEABLE_STATUSES.has(response.status)) {
+  if (requestMethod === "GET" && CACHEABLE_STATUSES.has(response.status)) {
     ctx.waitUntil(cache.put(cacheKey, response.clone()));
   }
 
-  return withCacheHeader(response, shouldRefresh ? "REFRESH" : "MISS", method);
+  return withCacheHeader(response, shouldRefresh ? "REFRESH" : "MISS", requestMethod);
 }
 
+/**
+ * Returns cache metadata for an object without exposing the cached response body.
+ */
 export async function getImageMetadata(request, upstreamUrl, env = {}, originalRequest = request, storageClient = createStorageClient(env)) {
   const cacheKey = new Request(request.url, { method: "GET" });
   const cached = await caches.default.match(cacheKey);
@@ -54,14 +68,8 @@ export async function getImageMetadata(request, upstreamUrl, env = {}, originalR
   if (cached) {
     return jsonMetadata("HIT", request.url, cached.status, cached.headers, originalRequest);
   }
-  const upstreamResponse = await fetch(await createStorageRequest(upstreamUrl, "HEAD", request.headers, storageClient));
+  const upstreamResponse = await fetchStorageResponse(upstreamUrl, "HEAD", request.headers, storageClient);
   return jsonMetadata("MISS", request.url, upstreamResponse.status, upstreamResponse.headers, originalRequest);
-}
-
-async function createStorageRequest(upstreamUrl, method, requestHeaders, storageClient) {
-  const headers = pickHeaders(requestHeaders, ["range", "if-none-match", "if-modified-since"]);
-
-  return storageClient.signedObjectRequest("", { url: upstreamUrl, method, headers });
 }
 
 function withCacheTtl(response) {
@@ -123,7 +131,11 @@ function withCacheHeader(response, cacheStatus, method) {
   headers.set("x-worker-cache", cacheStatus);
 
   return rebuildResponse(response, {
-    body: method === "HEAD" ? null : response.body,
+    body: shouldStripBody(response.status, method) ? null : response.body,
     headers,
   });
+}
+
+function shouldStripBody(status, method) {
+  return method === "HEAD" || status === 204 || status === 205 || status === 304;
 }

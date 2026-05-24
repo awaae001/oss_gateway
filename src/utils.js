@@ -1,8 +1,31 @@
+import { ConfigError, UpstreamFetchError } from "./errors.js";
+
 /**
  * Returns true unless the value explicitly disables a feature.
  */
 export function isEnabledByDefault(value) {
   return !/^(0|false|no|off)$/i.test(String(value ?? "").trim());
+}
+
+/**
+ * Returns whether the thrown value represents invalid local configuration.
+ */
+export function isConfigError(error) {
+  return error instanceof ConfigError;
+}
+
+/**
+ * Returns whether the thrown value represents an upstream fetch failure.
+ */
+export function isUpstreamFetchError(error) {
+  return error instanceof UpstreamFetchError;
+}
+
+/**
+ * Creates a standard invalid configuration error.
+ */
+export function invalidConfig(message, options) {
+  return new ConfigError(message, options);
 }
 
 /**
@@ -69,6 +92,6 @@ export function requireConfig(entries) {
     .map(([name]) => name);
 
   if (missing.length > 0) {
-    throw new Error(`Missing OSS config: ${missing.join(", ")}`);
+    throw new ConfigError(`Missing OSS config: ${missing.join(", ")}`);
   }
 }

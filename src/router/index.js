@@ -1,6 +1,6 @@
 import { fetchWithCache, getImageMetadata } from "../cache/index.js";
+import { isConfigError, isEnabledByDefault, isUpstreamFetchError, json, rebuildResponse } from "../utils.js";
 import { createStorageClient } from "../providers/index.js";
-import { isEnabledByDefault, json, rebuildResponse } from "../utils.js";
 
 const ROUTER_MIDDLEWARES = [
   methodMiddleware,
@@ -11,6 +11,9 @@ const ROUTER_MIDDLEWARES = [
   responseMiddleware,
 ];
 
+/**
+ * Routes a request through the worker middleware chain.
+ */
 export async function handleRequest(request, env, ctx) {
   const routerContext = {
     request,
@@ -45,18 +48,16 @@ function configMiddleware(routerContext) {
   try {
     routerContext.storageClient = createStorageClient(routerContext.env);
   } catch (error) {
+    if (!isConfigError(error)) {
+      throw error;
+    }
+
     routerContext.response = json({ error: error.message }, 500);
   }
 }
 
 function objectKeyMiddleware(routerContext) {
-  const objectKey = routerContext.url.pathname.replace(/^\/+/, "");
-  if (!objectKey) {
-    routerContext.response = json({ error: "Missing object key" }, 400);
-    return;
-  }
-
-  routerContext.objectKey = objectKey;
+  routerContext.objectKey = routerContext.url.pathname.replace(/^\/+/, "");
 }
 
 function normalizeRequestMiddleware(routerContext) {
@@ -87,6 +88,10 @@ function upstreamMiddleware(routerContext) {
       routerContext.url.search,
     );
   } catch (error) {
+    if (!isConfigError(error)) {
+      throw error;
+    }
+
     routerContext.response = json({ error: error.message }, 500);
   }
 }
@@ -102,8 +107,18 @@ async function responseMiddleware(routerContext) {
     routerContext.response = routerContext.forceInline && !routerContext.isMetadataRequest
       ? withInlineDisposition(response)
       : response;
-  } catch {
-    routerContext.response = json({ error: "Bad Gateway" }, 502);
+  } catch (error) {
+    if (isConfigError(error)) {
+      routerContext.response = json({ error: error.message }, 500);
+      return;
+    }
+
+    if (isUpstreamFetchError(error)) {
+      routerContext.response = json({ error: "Bad Gateway" }, 502);
+      return;
+    }
+
+    throw error;
   }
 }
 
@@ -118,4 +133,3 @@ function withInlineDisposition(response) {
 
   return rebuildResponse(response, { headers });
 }
-
