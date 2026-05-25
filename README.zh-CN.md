@@ -128,7 +128,7 @@ http://localhost:8787/path/to/file.jpg?is_cache
 
 ## 查询参数处理
 
-`is_cache` 会被当作调试开关处理，`inline` 会强制 Worker 返回 `Content-Disposition: inline`。这些内部参数本身不会进入缓存键。设置 `FORCE_INLINE=1` 可以全局启用 inline 覆写，无需在 URL 上添加参数。
+`is_cache` 会被当作调试开关处理，`inline` 会强制 Worker 返回 `Content-Disposition: inline`。这些内部参数本身不会进入缓存键。`FORCE_INLINE` 默认开启；设为 `false` 后仅当 URL 带有 `?inline` 时才覆写。
 
 默认会把其余查询参数全部移除，用于规范化缓存 key 和上游请求。可通过 `FORCE_QUERY_NORMALIZATION=false` 关闭此行为。
 

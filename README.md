@@ -129,7 +129,7 @@ Example response:
 
 ## Query Parameter Handling
 
-`is_cache` is treated as a debug flag, and `inline` forces `Content-Disposition: inline` on the Worker response. These internal parameters are never part of the cache key. Set `FORCE_INLINE=1` to globally apply inline disposition without requiring the query parameter.
+`is_cache` is treated as a debug flag, and `inline` forces `Content-Disposition: inline` on the Worker response. These internal parameters are never part of the cache key. `FORCE_INLINE` is enabled by default; set it to `false` to only apply inline when `?inline` is present in the URL.
 
 By default, all remaining query parameters are stripped for cache key normalization and upstream fetching. Set `FORCE_QUERY_NORMALIZATION=false` to disable this behavior.
 
