@@ -10,7 +10,7 @@ It supports Aliyun OSS native signing and a read-only S3-compatible provider usi
 
 - Proxy private Aliyun OSS or S3-compatible objects through Cloudflare Worker
 - Keep object storage buckets private; no public read access required
-- Select provider with `OSS_PROVIDER=aliyun` or `OSS_PROVIDER=s3`
+- Provider type must be configured via `OSS_PROVIDER` (`aliyun` or `s3`)
 - Cache `200` responses in `caches.default`
 - Cache `400` and `404` responses for 30 minutes
 - Mask upstream OSS / S3 XML errors behind an Apache-style error page with randomized OS label and random IP address
@@ -39,7 +39,7 @@ Common OSS variables:
 
 | Name | Recommended type | Description |
 | --- | --- | --- |
-| `OSS_PROVIDER` | Variable | `aliyun` by default. Set to `s3` for S3-compatible storage. Aliases such as `oss`, `aliyun-oss`, `aws-s3`, and `s3-compatible` are also accepted. |
+| `OSS_PROVIDER` | Variable | **Required.** Set to `aliyun` for Aliyun OSS or `s3` for S3-compatible storage. Aliases such as `oss`, `aliyun-oss`, `aws-s3`, and `s3-compatible` are also accepted. |
 | `OSS_BASE_URL` | Secret or variable | Upstream bucket endpoint. For Aliyun OSS, use your upstream object base URL, such as a bucket endpoint or custom domain. For S3-compatible storage, use the service endpoint. |
 | `OSS_BUCKET` | Secret or variable | Bucket name. Required for ALL providers.  |
 | `OSS_ACCESS_KEY_ID` | Secret | Access key ID |

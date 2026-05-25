@@ -4,8 +4,12 @@ import { createS3Client } from "./sdk/s3.js";
 
 export function createStorageClient(config = {}) {
   const providerType = String(
-    config.providerType || config.provider || config.type || config.OSS_PROVIDER || config.STORAGE_PROVIDER || "aliyun",
+    config.providerType || config.provider || config.type || config.OSS_PROVIDER || config.STORAGE_PROVIDER || "",
   ).trim().toLowerCase();
+
+  if (!providerType) {
+    throw invalidConfig("Missing required config: OSS_PROVIDER (storage provider type, e.g. aliyun or s3)");
+  }
 
   switch (providerType) {
     case "aliyun":

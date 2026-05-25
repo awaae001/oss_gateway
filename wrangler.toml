@@ -9,4 +9,4 @@ enabled = true
 [vars]
 FORCE_QUERY_NORMALIZATION=true
 APACHE_ERROR_PAGE=true
-OSS_REGION="s3"
+OSS_PROVIDER="s3"
