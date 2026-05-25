@@ -86,7 +86,7 @@ function renderErrorPage(status, statusText) {
 }
 
 function randomOsLabel() {
-  const options = ["Ubuntu", "CentOS", "ArchOS","GithubAction"];
+  const options = ["Ubuntu", "CentOS", "ArchOS", "Debian", "Fedora", "Windows NT"];
   const index = crypto.getRandomValues(new Uint8Array(1))[0] % options.length;
   return options[index];
 }

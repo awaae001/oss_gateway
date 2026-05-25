@@ -60,6 +60,7 @@ Other optional variables:
 | `CACHE_REFRESH_KEY` | Secret | Enables force-refresh when provided |
 | `CORS_ALLOW_ORIGIN` | Variable | Empty/unset disables CORS; use `*` or a specific origin to enable it |
 | `FORCE_QUERY_NORMALIZATION` | Variable | Enabled by default. Set to `false` to preserve non-internal query parameters in cache keys and upstream requests. |
+| `FORCE_INLINE` | Variable | Enabled by default. Set to `false` to disable and only apply inline disposition when `?inline` is in the URL. |
 | `APACHE_ERROR_PAGE` | Variable | Enabled by default. Set to `false` to disable the Apache-style error page and return the original upstream error response for debugging. |
 | `SANITIZE_RESPONSE_HEADERS` | Variable | Enabled by default. Set to `false` to pass upstream response headers through without whitelist filtering. |
 
@@ -128,7 +129,7 @@ Example response:
 
 ## Query Parameter Handling
 
-`is_cache` is treated as a debug flag, and `inline` forces `Content-Disposition: inline` on the Worker response. These internal parameters are never part of the cache key.
+`is_cache` is treated as a debug flag, and `inline` forces `Content-Disposition: inline` on the Worker response. These internal parameters are never part of the cache key. Set `FORCE_INLINE=1` to globally apply inline disposition without requiring the query parameter.
 
 By default, all remaining query parameters are stripped for cache key normalization and upstream fetching. Set `FORCE_QUERY_NORMALIZATION=false` to disable this behavior.
 
@@ -202,6 +203,7 @@ npm run deploy
 - Optional CORS support through `CORS_ALLOW_ORIGIN`
 - Response header sanitization is enabled by default; set `SANITIZE_RESPONSE_HEADERS=false` to disable it
 - Optional cache refresh through `x-cache-refresh-key`
+- `FORCE_INLINE` to globally rewrite `Content-Disposition` to `inline`
 
 ## Why Use This?
 

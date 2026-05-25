@@ -63,7 +63,7 @@ function objectKeyMiddleware(routerContext) {
 function normalizeRequestMiddleware(routerContext) {
   const { url, request, env } = routerContext;
   const isMetadataRequest = url.searchParams.has("is_cache");
-  const forceInline = url.searchParams.has("inline");
+  const forceInline = url.searchParams.has("inline") || isEnabledByDefault(env.FORCE_INLINE);
   const queryNormalizationProtectionEnabled = isEnabledByDefault(env.FORCE_QUERY_NORMALIZATION);
 
   if (isMetadataRequest) {

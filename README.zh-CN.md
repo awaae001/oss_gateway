@@ -58,6 +58,7 @@ Provider 特定可选变量：
 | `CACHE_REFRESH_KEY` | Secret | 配置后启用强制刷新缓存 |
 | `CORS_ALLOW_ORIGIN` | Variable | 为空或不设置时禁用 CORS；可设置为 `*` 或指定来源域名 |
 | `FORCE_QUERY_NORMALIZATION` | Variable | 默认开启。设为 `false` 后，会保留非内部查询参数进入缓存键和上游请求。 |
+| `FORCE_INLINE` | Variable | 默认开启。设为 `false` 可关闭，之后仅当 URL 携带 `?inline` 参数时才覆写为 inline。 |
 | `APACHE_ERROR_PAGE` | Variable | 默认开启。设为 `false` 后，关闭 Apache 风格错误页，直接返回原始错误响应，便于调试上游 XML / 文本错误体。 |
 | `SANITIZE_RESPONSE_HEADERS` | Variable | 默认开启。设为 `false` 后，不再对白名单之外的上游响应头做过滤。 |
 
@@ -127,7 +128,7 @@ http://localhost:8787/path/to/file.jpg?is_cache
 
 ## 查询参数处理
 
-`is_cache` 会被当作调试开关处理，`inline` 会强制 Worker 返回 `Content-Disposition: inline`。这些内部参数本身不会进入缓存键。
+`is_cache` 会被当作调试开关处理，`inline` 会强制 Worker 返回 `Content-Disposition: inline`。这些内部参数本身不会进入缓存键。设置 `FORCE_INLINE=1` 可以全局启用 inline 覆写，无需在 URL 上添加参数。
 
 默认会把其余查询参数全部移除，用于规范化缓存 key 和上游请求。可通过 `FORCE_QUERY_NORMALIZATION=false` 关闭此行为。
 
@@ -201,6 +202,7 @@ npm run deploy
 - 可选通过 `CORS_ALLOW_ORIGIN` 启用 CORS
 - 默认启用出站响应头清洗；设 `SANITIZE_RESPONSE_HEADERS=false` 可关闭
 - 可选通过 `x-cache-refresh-key` 强制刷新缓存
+- 可选通过 `FORCE_INLINE` 全局强制覆写 `Content-Disposition` 为 `inline`
 
 ## 为什么需要这个项目？
 
