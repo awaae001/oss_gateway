@@ -83,15 +83,26 @@ export async function signOssRequest(url, env, options = {}) {
 }
 
 export function buildAliyunObjectUrl(config = {}, key, search = "") {
-  const baseUrl = String(config.endpoint || config.baseUrl || config.OSS_BASE_URL || "").trim();
-  getAliyunBucketName(config);
-  requireConfig([["OSS_BASE_URL", baseUrl]]);
+  const rawBaseUrl = String(config.endpoint || config.baseUrl || config.OSS_BASE_URL || "").trim();
+  const bucket = getAliyunBucketName(config);
+  requireConfig([["OSS_BASE_URL", rawBaseUrl]]);
 
   return buildObjectUrl(
-    parseObjectBaseUrl(baseUrl),
+    normalizeAliyunBaseUrl(rawBaseUrl, bucket),
     encodeOssObjectKey(String(key || "").replace(/^\/+/, "")),
     search,
   );
+}
+
+function normalizeAliyunBaseUrl(baseUrl, bucket) {
+  const url = parseObjectBaseUrl(baseUrl);
+  const hostname = url.hostname.toLowerCase();
+
+  if (/^oss-[a-z0-9-]+\.aliyuncs\.com$/.test(hostname)) {
+    url.hostname = `${bucket}.${url.hostname}`;
+  }
+
+  return url;
 }
 
 function getAliyunBucketName(config = {}) {

@@ -40,7 +40,7 @@ Common OSS variables:
 | Name | Recommended type | Description |
 | --- | --- | --- |
 | `OSS_PROVIDER` | Variable | **Required.** Set to `aliyun` for Aliyun OSS or `s3` for S3-compatible storage. Aliases such as `oss`, `aliyun-oss`, `aws-s3`, and `s3-compatible` are also accepted. |
-| `OSS_BASE_URL` | Secret or variable | Upstream bucket endpoint. For Aliyun OSS, use your upstream object base URL, such as a bucket endpoint or custom domain. For S3-compatible storage, use the service endpoint. |
+| `OSS_BASE_URL` | Secret or variable | Upstream object base URL. For Aliyun OSS, use a bucket endpoint, custom domain, or regional service endpoint (for example `https://oss-cn-hongkong.aliyuncs.com`; the Worker will automatically prepend the bucket host). For S3-compatible storage, use the service endpoint. |
 | `OSS_BUCKET` | Secret or variable | Bucket name. Required for ALL providers.  |
 | `OSS_ACCESS_KEY_ID` | Secret | Access key ID |
 | `OSS_ACCESS_KEY_SECRET` | Secret | Access key secret |
