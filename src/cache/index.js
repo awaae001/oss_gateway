@@ -8,6 +8,7 @@ const CACHE_TTL = 604800;
 const CLIENT_ERROR_CACHE_TTL = 1800;
 const CACHEABLE_STATUSES = new Set([200, 400, 404]);
 const REFRESH_HEADER = "x-cache-refresh-key";
+const CACHE_STORED_AT_HEADER = "x-worker-cache-stored-at";
 
 /**
  * Fetches an object through the shared cache while preserving GET/HEAD semantics.
@@ -50,7 +51,7 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}, storag
 
   headers.set("cache-control", `public, max-age=${getCacheTtl(upstreamResponse.status)}`);
 
-  const response = withErrorPage(rebuildResponse(upstreamResponse, { headers }), request, env);
+  const response = withCacheTtl(withErrorPage(rebuildResponse(upstreamResponse, { headers }), request, env));
   if (requestMethod === "GET" && CACHEABLE_STATUSES.has(response.status)) {
     ctx.waitUntil(cache.put(cacheKey, response.clone()));
   }
@@ -75,6 +76,9 @@ export async function getImageMetadata(request, upstreamUrl, env = {}, originalR
 function withCacheTtl(response) {
   const headers = new Headers(response.headers);
   headers.set("cache-control", `public, max-age=${getCacheTtl(response.status)}`);
+  if (!headers.has(CACHE_STORED_AT_HEADER)) {
+    headers.set(CACHE_STORED_AT_HEADER, new Date().toISOString());
+  }
 
   return rebuildResponse(response, { headers });
 }
@@ -84,6 +88,24 @@ function getCacheTtl(status) {
 }
 
 function jsonMetadata(cacheStatus, url, status, headers, request) {
+  const rawCachedAtUtc = headers.get(CACHE_STORED_AT_HEADER);
+  const cachedAtMs = typeof rawCachedAtUtc === "string" ? Date.parse(rawCachedAtUtc) : Number.NaN;
+  const cachedAtUtc = Number.isFinite(cachedAtMs) ? rawCachedAtUtc : null;
+  let cachedForMs = null;
+  let cachedForHuman = null;
+
+  if (cachedAtUtc !== null) {
+    cachedForMs = Math.max(0, Date.now() - cachedAtMs);
+
+    const totalSeconds = Math.floor(cachedForMs / 1000);
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    cachedForHuman = `${days}d ${hours}h ${minutes}m ${seconds}s`;
+  }
+
   return json({
     cache: cacheStatus,
     url,
@@ -93,6 +115,9 @@ function jsonMetadata(cacheStatus, url, status, headers, request) {
     etag: headers.get("etag"),
     lastModified: headers.get("last-modified"),
     cacheControl: headers.get("cache-control"),
+    cachedAtUtc,
+    cachedForMs,
+    cachedForHuman,
     node: getCfNode(request),
     request: getCfRequest(request),
   }, 200, {
@@ -129,6 +154,9 @@ function getCfRequest(request) {
 function withCacheHeader(response, cacheStatus, method) {
   const headers = new Headers(response.headers);
   headers.set("x-worker-cache", cacheStatus);
+  if (!headers.has(CACHE_STORED_AT_HEADER)) {
+    headers.set(CACHE_STORED_AT_HEADER, new Date().toISOString());
+  }
 
   return rebuildResponse(response, {
     body: shouldStripBody(response.status, method) ? null : response.body,
