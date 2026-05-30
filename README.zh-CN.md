@@ -108,14 +108,24 @@ http://localhost:8787/path/to/file.jpg?is_cache
 
 ```json
 {
-  "cache": "HIT",
   "url": "https://example.com/path/to/file.jpg",
-  "status": 200,
-  "contentType": "image/jpeg",
-  "contentLength": "12345",
-  "etag": "...",
-  "lastModified": "...",
-  "cacheControl": "public, max-age=604800",
+  "cache": {
+    "status": "HIT",
+    "firstStoredAtUtc": "2026-05-29T10:00:00.000Z",
+    "firstStoredAgeMs": 7200000,
+    "firstStoredAgeHuman": "0d 2h 0m 0s",
+    "lastRenewedAtUtc": "2026-05-29T11:30:00.000Z",
+    "lastRenewedAgeMs": 1800000,
+    "lastRenewedAgeHuman": "0d 0h 30m 0s"
+  },
+  "object": {
+    "status": 200,
+    "contentType": "image/jpeg",
+    "contentLength": "12345",
+    "etag": "...",
+    "lastModified": "...",
+    "cacheControl": "public, max-age=604800"
+  },
   "node": {
     "type": "edge",
     "colo": "NRT",

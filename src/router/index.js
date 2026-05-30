@@ -1,4 +1,4 @@
-import { fetchWithCache, getImageMetadata } from "../cache/index.js";
+import { fetchWithCache, getCacheMetadata } from "../cache/index.js";
 import { isConfigError, isEnabledByDefault, isUpstreamFetchError, json, rebuildResponse } from "../utils.js";
 import { createStorageClient } from "../providers/index.js";
 
@@ -101,7 +101,7 @@ async function responseMiddleware(routerContext) {
 
   try {
     const response = routerContext.isMetadataRequest
-      ? await getImageMetadata(normalizedRequest, upstreamUrl, env, routerContext.request, storageClient)
+      ? await getCacheMetadata(normalizedRequest, upstreamUrl, env, routerContext.request, storageClient)
       : await fetchWithCache(normalizedRequest, upstreamUrl, ctx, env, storageClient);
 
     if (await isBucketListing(response)) {

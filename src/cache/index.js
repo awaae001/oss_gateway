@@ -4,24 +4,34 @@ import { createStorageClient } from "../providers/index.js";
 import { fetchStorageResponse } from "./storage.js";
 import { json, rebuildResponse } from "../utils.js";
 
-const CACHE_TTL = 604800;
-const CLIENT_ERROR_CACHE_TTL = 1800;
-const CACHEABLE_STATUSES = new Set([200, 400, 404]);
+const DEFAULT_CACHE_TTL = 604800;
+const DEFAULT_CACHE_POLICY = { cacheable: false, ttl: DEFAULT_CACHE_TTL };
+const CACHE_POLICY_BY_STATUS = new Map([
+  [200, { cacheable: true, ttl: DEFAULT_CACHE_TTL }],
+  [400, { cacheable: true, ttl: 1800 }],
+  [404, { cacheable: true, ttl: 1800 }],
+]);
 const REFRESH_HEADER = "x-cache-refresh-key";
-const CACHE_STORED_AT_HEADER = "x-worker-cache-stored-at";
+const CACHE_STATUS_HEADER = "x-worker-cache";
+const CACHE_FIRST_STORED_AT_HEADER = "x-worker-cache-first-stored-at";
+const CACHE_LAST_RENEWED_AT_HEADER = "x-worker-cache-last-renewed-at";
+const CACHE_TIME_FIELDS = [
+  [CACHE_FIRST_STORED_AT_HEADER, "firstStoredAtUtc", "firstStoredAgeMs", "firstStoredAgeHuman"],
+  [CACHE_LAST_RENEWED_AT_HEADER, "lastRenewedAtUtc", "lastRenewedAgeMs", "lastRenewedAgeHuman"],
+];
+
+// utills
+function getCachePolicy(status) {
+  const policy = CACHE_POLICY_BY_STATUS.get(status);
+
+  return policy || DEFAULT_CACHE_POLICY;
+}
 
 /**
  * Fetches an object through the shared cache while preserving GET/HEAD semantics.
  */
 export async function fetchWithCache(request, upstreamUrl, ctx, env = {}, storageClient = createStorageClient(env)) {
   const requestMethod = request.method.toUpperCase();
-
-  if (request.headers.has("range")) {
-    return fetchStorageResponse(upstreamUrl, requestMethod, request.headers, storageClient);
-  }
-
-  const cache = caches.default;
-  const cacheKey = new Request(request.url, { method: "GET" });
   const refreshKey = String(env.CACHE_REFRESH_KEY || "").trim();
   const providedRefreshKey = request.headers.get(REFRESH_HEADER);
   const shouldRefresh = Boolean(refreshKey && providedRefreshKey);
@@ -30,30 +40,40 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}, storag
     return new Response("Forbidden", { status: 403 });
   }
 
+  if (request.headers.has("range")) {
+    return fetchStorageResponse(upstreamUrl, requestMethod, request.headers, storageClient);
+  }
+
+  const cache = caches.default;
+  const cacheKey = new Request(request.url, { method: "GET" });
+
   if (shouldRefresh) {
     await cache.delete(cacheKey);
-  } else {
-    const cached = await cache.match(cacheKey);
-    if (cached) {
-      const conditionalResponse = createConditionalHitResponse(request, cached);
-      ctx.waitUntil(cache.put(cacheKey, withCacheTtl(cached.clone())));
+  }
+
+  if (!shouldRefresh) {
+    const cachedResponse = await cache.match(cacheKey);
+    if (cachedResponse) {
+      const conditionalResponse = createConditionalHitResponse(request, cachedResponse);
+      ctx.waitUntil(cache.put(cacheKey, toCacheEntry(cachedResponse.clone(), getCachePolicy(cachedResponse.status))));
 
       if (conditionalResponse) {
         return withCacheHeader(conditionalResponse, "HIT", requestMethod);
       }
 
-      return withCacheHeader(cached, "HIT", requestMethod);
+      return withCacheHeader(cachedResponse, "HIT", requestMethod);
     }
   }
 
   const upstreamResponse = await fetchStorageResponse(upstreamUrl, requestMethod, request.headers, storageClient);
   const headers = new Headers(upstreamResponse.headers);
+  const cachePolicy = getCachePolicy(upstreamResponse.status);
 
-  headers.set("cache-control", `public, max-age=${getCacheTtl(upstreamResponse.status)}`);
+  headers.set("cache-control", `public, max-age=${cachePolicy.ttl}`);
 
-  const response = withCacheTtl(withErrorPage(rebuildResponse(upstreamResponse, { headers }), request, env));
-  if (requestMethod === "GET" && CACHEABLE_STATUSES.has(response.status)) {
-    ctx.waitUntil(cache.put(cacheKey, response.clone()));
+  const response = withErrorPage(rebuildResponse(upstreamResponse, { headers }), request, env);
+  if (requestMethod === "GET" && cachePolicy.cacheable) {
+    ctx.waitUntil(cache.put(cacheKey, toCacheEntry(response.clone(), cachePolicy)));
   }
 
   return withCacheHeader(response, shouldRefresh ? "REFRESH" : "MISS", requestMethod);
@@ -62,7 +82,7 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}, storag
 /**
  * Returns cache metadata for an object without exposing the cached response body.
  */
-export async function getImageMetadata(request, upstreamUrl, env = {}, originalRequest = request, storageClient = createStorageClient(env)) {
+export async function getCacheMetadata(request, upstreamUrl, env = {}, originalRequest = request, storageClient = createStorageClient(env)) {
   const cacheKey = new Request(request.url, { method: "GET" });
   const cached = await caches.default.match(cacheKey);
 
@@ -73,51 +93,64 @@ export async function getImageMetadata(request, upstreamUrl, env = {}, originalR
   return jsonMetadata("MISS", request.url, upstreamResponse.status, upstreamResponse.headers, originalRequest);
 }
 
-function withCacheTtl(response) {
+function toCacheEntry(response, cachePolicy) {
   const headers = new Headers(response.headers);
-  headers.set("cache-control", `public, max-age=${getCacheTtl(response.status)}`);
-  if (!headers.has(CACHE_STORED_AT_HEADER)) {
-    headers.set(CACHE_STORED_AT_HEADER, new Date().toISOString());
+  const now = new Date().toISOString();
+
+  if (cachePolicy.cacheable) {
+    headers.set("cache-control", `public, max-age=${cachePolicy.ttl}`);
   }
+  if (!headers.has(CACHE_FIRST_STORED_AT_HEADER)) {
+    headers.set(CACHE_FIRST_STORED_AT_HEADER, now);
+  }
+  headers.set(CACHE_LAST_RENEWED_AT_HEADER, now);
 
   return rebuildResponse(response, { headers });
 }
 
-function getCacheTtl(status) {
-  return status === 400 || status === 404 ? CLIENT_ERROR_CACHE_TTL : CACHE_TTL;
-}
-
 function jsonMetadata(cacheStatus, url, status, headers, request) {
-  const rawCachedAtUtc = headers.get(CACHE_STORED_AT_HEADER);
-  const cachedAtMs = typeof rawCachedAtUtc === "string" ? Date.parse(rawCachedAtUtc) : Number.NaN;
-  const cachedAtUtc = Number.isFinite(cachedAtMs) ? rawCachedAtUtc : null;
-  let cachedForMs = null;
-  let cachedForHuman = null;
+  const now = Date.now();
+  const cache = {
+    status: cacheStatus,
+    firstStoredAtUtc: null,
+    firstStoredAgeMs: null,
+    firstStoredAgeHuman: null,
+    lastRenewedAtUtc: null,
+    lastRenewedAgeMs: null,
+    lastRenewedAgeHuman: null,
+  };
 
-  if (cachedAtUtc !== null) {
-    cachedForMs = Math.max(0, Date.now() - cachedAtMs);
+  for (const [headerName, atKey, ageMsKey, ageHumanKey] of CACHE_TIME_FIELDS) {
+    const rawValue = headers.get(headerName);
+    const parsedAt = typeof rawValue === "string" ? Date.parse(rawValue) : Number.NaN;
 
-    const totalSeconds = Math.floor(cachedForMs / 1000);
+    if (!Number.isFinite(parsedAt)) {
+      continue;
+    }
+
+    const ageMs = Math.max(0, now - parsedAt);
+    const totalSeconds = Math.floor(ageMs / 1000);
     const days = Math.floor(totalSeconds / 86400);
     const hours = Math.floor((totalSeconds % 86400) / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
 
-    cachedForHuman = `${days}d ${hours}h ${minutes}m ${seconds}s`;
+    cache[atKey] = rawValue;
+    cache[ageMsKey] = ageMs;
+    cache[ageHumanKey] = `${days}d ${hours}h ${minutes}m ${seconds}s`;
   }
 
   return json({
-    cache: cacheStatus,
     url,
-    status,
-    contentType: headers.get("content-type"),
-    contentLength: headers.get("content-length"),
-    etag: headers.get("etag"),
-    lastModified: headers.get("last-modified"),
-    cacheControl: headers.get("cache-control"),
-    cachedAtUtc,
-    cachedForMs,
-    cachedForHuman,
+    cache,
+    object: {
+      status,
+      contentType: headers.get("content-type"),
+      contentLength: headers.get("content-length"),
+      etag: headers.get("etag"),
+      lastModified: headers.get("last-modified"),
+      cacheControl: headers.get("cache-control"),
+    },
     node: getCfNode(request),
     request: getCfRequest(request),
   }, 200, {
@@ -153,10 +186,9 @@ function getCfRequest(request) {
 
 function withCacheHeader(response, cacheStatus, method) {
   const headers = new Headers(response.headers);
-  headers.set("x-worker-cache", cacheStatus);
-  if (!headers.has(CACHE_STORED_AT_HEADER)) {
-    headers.set(CACHE_STORED_AT_HEADER, new Date().toISOString());
-  }
+  headers.set(CACHE_STATUS_HEADER, cacheStatus);
+  headers.delete(CACHE_FIRST_STORED_AT_HEADER);
+  headers.delete(CACHE_LAST_RENEWED_AT_HEADER);
 
   return rebuildResponse(response, {
     body: shouldStripBody(response.status, method) ? null : response.body,
