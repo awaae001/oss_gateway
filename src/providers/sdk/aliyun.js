@@ -3,7 +3,6 @@ import { buildObjectUrl, parseObjectBaseUrl } from "../url.js";
 
 const OSS_AUTH_PREFIX = "OSS";
 const encoder = new TextEncoder();
-
 const OSS_SUBRESOURCES = new Set([
   "acl",
   "uploads",

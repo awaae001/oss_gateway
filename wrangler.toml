@@ -5,8 +5,3 @@ minify = true
 
 [observability]
 enabled = true
-
-[vars]
-FORCE_QUERY_NORMALIZATION=true
-APACHE_ERROR_PAGE=true
-OSS_PROVIDER="s3"

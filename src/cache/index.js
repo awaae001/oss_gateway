@@ -22,7 +22,6 @@ const CACHE_TIME_FIELDS = [
   [CACHE_LAST_RENEWED_AT_HEADER, "lastRenewedAtUtc", "lastRenewedAgeMs", "lastRenewedAgeHuman"],
 ];
 
-// utills
 function getCachePolicy(status) {
   const policy = CACHE_POLICY_BY_STATUS.get(status);
 
