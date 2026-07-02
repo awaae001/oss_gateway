@@ -5,6 +5,7 @@ const SERVICE = "s3";
 const ALGORITHM = "AWS4-HMAC-SHA256";
 const UNSIGNED_PAYLOAD = "UNSIGNED-PAYLOAD";
 const encoder = new TextEncoder();
+let cachedSigningKey;
 
 /**
  * Minimal read-only S3-compatible client for Worker/edge runtimes.
@@ -73,14 +74,15 @@ export async function signS3ObjectRequest(url, config = {}, options = {}) {
     ALGORITHM,
     amzDate,
     credentialScope,
-    [...new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(canonicalRequest)))].map((byte) => byte.toString(16).padStart(2, "0")).join(""),
+    toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(canonicalRequest)))),
   ].join("\n");
 
-  const dateKey = await hmac(`AWS4${secretAccessKey}`, date);
-  const regionKey = await hmac(dateKey, region);
-  const serviceKey = await hmac(regionKey, SERVICE);
-  const signingKey = await hmac(serviceKey, "aws4_request");
-  const signature = [...await hmac(signingKey, stringToSign)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const signingKey = await getSigningKey(accessKeyId, secretAccessKey, date, region);
+  const signature = toHex(
+    new Uint8Array(
+      await crypto.subtle.sign("HMAC", signingKey, encoder.encode(stringToSign)),
+    ),
+  );
 
   headers.set(
     "authorization",
@@ -130,6 +132,55 @@ async function hmac(key, value) {
     ["sign"],
   );
   return new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(value)));
+}
+
+async function getSigningKey(accessKeyId, secretAccessKey, date, region) {
+  if (
+    cachedSigningKey
+    && cachedSigningKey.accessKeyId === accessKeyId
+    && cachedSigningKey.secretAccessKey === secretAccessKey
+    && cachedSigningKey.date === date
+    && cachedSigningKey.region === region
+  ) {
+    return cachedSigningKey.promise;
+  }
+
+  const entry = {
+    accessKeyId,
+    secretAccessKey,
+    date,
+    region,
+    promise: null,
+  };
+  entry.promise = deriveSigningKey(secretAccessKey, date, region).catch((error) => {
+    if (cachedSigningKey === entry) {
+      cachedSigningKey = undefined;
+    }
+    throw error;
+  });
+  cachedSigningKey = entry;
+  return entry.promise;
+}
+
+async function deriveSigningKey(secretAccessKey, date, region) {
+  const dateKey = await hmac(`AWS4${secretAccessKey}`, date);
+  const regionKey = await hmac(dateKey, region);
+  const serviceKey = await hmac(regionKey, SERVICE);
+  const signingKey = await hmac(serviceKey, "aws4_request");
+
+  return crypto.subtle.importKey(
+    "raw",
+    signingKey,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+}
+
+function toHex(bytes) {
+  return [...bytes]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function awsEncode(value) {

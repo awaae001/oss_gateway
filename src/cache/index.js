@@ -1,8 +1,12 @@
 import { withErrorPage } from "../error-page.js";
-import { createConditionalHitResponse } from "./conditional.js";
-import { createStorageClient } from "../providers/index.js";
 import { fetchStorageResponse } from "./storage.js";
-import { json, rebuildResponse } from "../utils.js";
+import {
+  CACHE_FIRST_STORED_AT_HEADER,
+  CACHE_LAST_RENEWED_AT_HEADER,
+  createCacheEntry,
+  scheduleSlidingCacheRenewal,
+} from "./sliding.js";
+import { json, pickHeaders, rebuildResponse } from "../utils.js";
 
 const DEFAULT_CACHE_TTL = 604800;
 const DEFAULT_CACHE_POLICY = { cacheable: false, ttl: DEFAULT_CACHE_TTL };
@@ -13,8 +17,6 @@ const CACHE_POLICY_BY_STATUS = new Map([
 ]);
 const REFRESH_HEADER = "x-cache-refresh-key";
 const CACHE_STATUS_HEADER = "x-worker-cache";
-const CACHE_FIRST_STORED_AT_HEADER = "x-worker-cache-first-stored-at";
-const CACHE_LAST_RENEWED_AT_HEADER = "x-worker-cache-last-renewed-at";
 const CACHE_TIME_FIELDS = [
   [CACHE_FIRST_STORED_AT_HEADER, "firstStoredAtUtc", "firstStoredAgeMs", "firstStoredAgeHuman"],
   [CACHE_LAST_RENEWED_AT_HEADER, "lastRenewedAtUtc", "lastRenewedAgeMs", "lastRenewedAgeHuman"],
@@ -30,7 +32,7 @@ function getCachePolicy(status) {
 /**
  * Fetches an object through the shared cache while preserving GET/HEAD semantics.
  */
-export async function fetchWithCache(request, upstreamUrl, ctx, env = {}, storageClient = createStorageClient(env)) {
+export async function fetchWithCache(request, ctx, env, getStorageTarget) {
   const requestMethod = request.method.toUpperCase();
   const refreshKey = String(env.CACHE_REFRESH_KEY || "").trim();
   const providedRefreshKey = request.headers.get(REFRESH_HEADER);
@@ -38,10 +40,6 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}, storag
 
   if (shouldRefresh && providedRefreshKey !== refreshKey) {
     return new Response("Forbidden", { status: 403 });
-  }
-
-  if (request.headers.has("range")) {
-    return fetchStorageResponse(upstreamUrl, requestMethod, request.headers, storageClient);
   }
 
   const cache = caches.default;
@@ -52,19 +50,32 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}, storag
   }
 
   if (!shouldRefresh) {
-    const cachedResponse = await cache.match(cacheKey);
-    if (cachedResponse) {
-      const conditionalResponse = createConditionalHitResponse(request, cachedResponse);
-      ctx.waitUntil(cache.put(cacheKey, toCacheEntry(cachedResponse.clone(), getCachePolicy(cachedResponse.status))));
+    const lookupHeaders = pickHeaders(request.headers, [
+      "range",
+      "if-none-match",
+      "if-modified-since",
+    ]);
+    const lookupRequest = new Request(request.url, {
+      method: "GET",
+      headers: lookupHeaders,
+    });
+    const cachedResponse = await cache.match(lookupRequest);
 
-      if (conditionalResponse) {
-        return withCacheHeader(conditionalResponse, "HIT", requestMethod);
-      }
+    if (cachedResponse) {
+      scheduleSlidingCacheRenewal(
+        cache,
+        cacheKey,
+        cachedResponse,
+        getCachePolicy(cachedResponse.status),
+        ctx,
+        env,
+      );
 
       return withCacheHeader(cachedResponse, "HIT", requestMethod);
     }
   }
 
+  const { upstreamUrl, storageClient } = getStorageTarget();
   const upstreamResponse = await fetchStorageResponse(upstreamUrl, requestMethod, request.headers, storageClient);
   const headers = new Headers(upstreamResponse.headers);
   const cachePolicy = getCachePolicy(upstreamResponse.status);
@@ -73,7 +84,7 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}, storag
 
   const response = withErrorPage(rebuildResponse(upstreamResponse, { headers }), request, env);
   if (requestMethod === "GET" && cachePolicy.cacheable) {
-    ctx.waitUntil(cache.put(cacheKey, toCacheEntry(response.clone(), cachePolicy)));
+    ctx.waitUntil(cache.put(cacheKey, createCacheEntry(response.clone(), cachePolicy)));
   }
 
   return withCacheHeader(response, shouldRefresh ? "REFRESH" : "MISS", requestMethod);
@@ -82,30 +93,16 @@ export async function fetchWithCache(request, upstreamUrl, ctx, env = {}, storag
 /**
  * Returns cache metadata for an object without exposing the cached response body.
  */
-export async function getCacheMetadata(request, upstreamUrl, env = {}, originalRequest = request, storageClient = createStorageClient(env)) {
+export async function getCacheMetadata(request, originalRequest, getStorageTarget) {
   const cacheKey = new Request(request.url, { method: "GET" });
   const cached = await caches.default.match(cacheKey);
 
   if (cached) {
     return jsonMetadata("HIT", request.url, cached.status, cached.headers, originalRequest);
   }
+  const { upstreamUrl, storageClient } = getStorageTarget();
   const upstreamResponse = await fetchStorageResponse(upstreamUrl, "HEAD", request.headers, storageClient);
   return jsonMetadata("MISS", request.url, upstreamResponse.status, upstreamResponse.headers, originalRequest);
-}
-
-function toCacheEntry(response, cachePolicy) {
-  const headers = new Headers(response.headers);
-  const now = new Date().toISOString();
-
-  if (cachePolicy.cacheable) {
-    headers.set("cache-control", `public, max-age=${cachePolicy.ttl}`);
-  }
-  if (!headers.has(CACHE_FIRST_STORED_AT_HEADER)) {
-    headers.set(CACHE_FIRST_STORED_AT_HEADER, now);
-  }
-  headers.set(CACHE_LAST_RENEWED_AT_HEADER, now);
-
-  return rebuildResponse(response, { headers });
 }
 
 function jsonMetadata(cacheStatus, url, status, headers, request) {

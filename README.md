@@ -15,7 +15,7 @@ It supports Aliyun OSS native signing and a read-only S3-compatible provider usi
 - Cache `400` and `404` responses for 30 minutes
 - Mask upstream OSS / S3 XML errors behind an Apache-style error page with randomized OS label and random IP address
 - 7-day Worker Cache TTL for successful responses by default
-- Sliding cache renewal on cache hits
+- Optional sliding cache renewal, disabled by default
 - Optional metadata/debug endpoint via `?is_cache`
 - Optional inline display override via `?inline`
 - Optional cache refresh via request header
@@ -37,32 +37,33 @@ The Worker reads all configuration from Cloudflare Worker environment bindings (
 
 Common OSS variables:
 
-| Name | Recommended type | Description |
-| --- | --- | --- |
-| `OSS_PROVIDER` | Variable | **Required.** Set to `aliyun` for Aliyun OSS or `s3` for S3-compatible storage. Aliases such as `oss`, `aliyun-oss`, `aws-s3`, and `s3-compatible` are also accepted. |
-| `OSS_BASE_URL` | Secret or variable | Upstream object base URL. For Aliyun OSS, use a bucket endpoint, custom domain, or regional service endpoint (for example `https://oss-cn-hongkong.aliyuncs.com`; the Worker will automatically prepend the bucket host). For S3-compatible storage, use the service endpoint. |
-| `OSS_BUCKET` | Secret or variable | Bucket name. Required for ALL providers.  |
-| `OSS_ACCESS_KEY_ID` | Secret | Access key ID |
-| `OSS_ACCESS_KEY_SECRET` | Secret | Access key secret |
+| Name                    | Recommended type   | Description                                                                                                                                                                                                                                                                    |
+| ----------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `OSS_PROVIDER`          | Variable           | **Required.** Set to `aliyun` for Aliyun OSS or `s3` for S3-compatible storage. Aliases such as `oss`, `aliyun-oss`, `aws-s3`, and `s3-compatible` are also accepted.                                                                                                          |
+| `OSS_BASE_URL`          | Secret or variable | Upstream object base URL. For Aliyun OSS, use a bucket endpoint, custom domain, or regional service endpoint (for example `https://oss-cn-hongkong.aliyuncs.com`; the Worker will automatically prepend the bucket host). For S3-compatible storage, use the service endpoint. |
+| `OSS_BUCKET`            | Secret or variable | Bucket name. Required for ALL providers.                                                                                                                                                                                                                                       |
+| `OSS_ACCESS_KEY_ID`     | Secret             | Access key ID                                                                                                                                                                                                                                                                  |
+| `OSS_ACCESS_KEY_SECRET` | Secret             | Access key secret                                                                                                                                                                                                                                                              |
 
 Provider-specific optional variables:
 
-| Name | Recommended type | Description |
-| --- | --- | --- |
-| `OSS_REGION` | Variable | S3 SigV4 signing region. Defaults to `us-east-1`; use `auto` for Cloudflare R2 if needed. Aliyun native signing does not require it. |
-| `OSS_FORCE_PATH_STYLE` | Variable | S3 only. Set to `true` for path-style endpoints such as many MinIO/R2 setups. |
-| `OSS_SESSION_TOKEN` | Secret | S3 only. Temporary credential session token. |
+| Name                   | Recommended type | Description                                                                                                                          |
+| ---------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `OSS_REGION`           | Variable         | S3 SigV4 signing region. Defaults to `us-east-1`; use `auto` for Cloudflare R2 if needed. Aliyun native signing does not require it. |
+| `OSS_FORCE_PATH_STYLE` | Variable         | S3 only. Set to `true` for path-style endpoints such as many MinIO/R2 setups.                                                        |
+| `OSS_SESSION_TOKEN`    | Secret           | S3 only. Temporary credential session token.                                                                                         |
 
 Other optional variables:
 
-| Name | Recommended type | Description |
-| --- | --- | --- |
-| `CACHE_REFRESH_KEY` | Secret | Enables force-refresh when provided |
-| `CORS_ALLOW_ORIGIN` | Variable | Empty/unset disables CORS; use `*` or a specific origin to enable it |
-| `FORCE_QUERY_NORMALIZATION` | Variable | Enabled by default. Set to `false` to preserve non-internal query parameters in cache keys and upstream requests. |
-| `FORCE_INLINE` | Variable | Enabled by default. Set to `false` to disable and only apply inline disposition when `?inline` is in the URL. |
-| `APACHE_ERROR_PAGE` | Variable | Enabled by default. Set to `false` to disable the Apache-style error page and return the original upstream error response for debugging. |
-| `SANITIZE_RESPONSE_HEADERS` | Variable | Enabled by default. Set to `false` to pass upstream response headers through without whitelist filtering. |
+| Name                        | Recommended type | Description                                                                                                                              |
+| --------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `CACHE_REFRESH_KEY`         | Secret           | Enables force-refresh when provided                                                                                                      |
+| `CACHE_SLIDING_RENEWAL`     | Variable         | Disabled by default. Set to `true` to renew a cache entry after half of its TTL has elapsed.                                             |
+| `CORS_ALLOW_ORIGIN`         | Variable         | Empty/unset disables CORS; use `*` or a specific origin to enable it                                                                     |
+| `FORCE_QUERY_NORMALIZATION` | Variable         | Enabled by default. Set to `false` to preserve non-internal query parameters in cache keys and upstream requests.                        |
+| `FORCE_INLINE`              | Variable         | Enabled by default. Set to `false` to disable and only apply inline disposition when `?inline` is in the URL.                            |
+| `APACHE_ERROR_PAGE`         | Variable         | Enabled by default. Set to `false` to disable the Apache-style error page and return the original upstream error response for debugging. |
+| `SANITIZE_RESPONSE_HEADERS` | Variable         | Enabled by default. Set to `false` to pass upstream response headers through without whitelist filtering.                                |
 
 Access keys such as `OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, `OSS_SESSION_TOKEN`, and `CACHE_REFRESH_KEY` should be set as **Secrets** in the Cloudflare dashboard. If you also want to hide bucket information, you can set endpoint and bucket variables as Secrets too. The code reads them the same way.
 
@@ -96,6 +97,16 @@ The response header `x-worker-cache` indicates cache status:
 - `MISS`: fetched from upstream storage and stored in Worker Cache
 - `HIT`: served from Worker Cache
 - `REFRESH`: cache was force-refreshed via request header
+
+## Sliding Cache Renewal
+
+The original cache design renewed an entry on every cache hit so that frequently accessed objects could remain at the edge beyond their normal TTL. Sliding renewal is now disabled by default. Set `CACHE_SLIDING_RENEWAL=true` to enable it; an enabled entry is rewritten only after at least half of its TTL has elapsed, so ordinary cache hits do not repeatedly renew it.
+
+This design came from day-to-day observation: even when a file had a TTL configured, requesting it again the next day could still result in a `MISS`. Sliding renewal can reduce expiration of hot entries in the current PoP, but it cannot prevent early eviction under cache pressure or replicate an entry to other PoPs.
+
+Renewal can be expensive for large or frequently accessed objects. Each renewal adds a `cache.put()` call and streams the complete response body back into cache. Cloudflare counts every `match()`, `put()`, and `delete()` as a Cache API call. Current platform limits allow 50 Cache API calls per request on Workers Free and 1,000 on Workers Paid, with a maximum cache object size of 512 MB. `ctx.waitUntil()` keeps background cache writes alive for at most 30 seconds after the invocation ends. See the official [Workers limits](https://developers.cloudflare.com/workers/platform/limits/#cache-api-limits) and [`waitUntil()` documentation](https://developers.cloudflare.com/workers/runtime-apis/context/#waituntil).
+
+Leave renewal disabled unless retaining hot objects beyond their normal TTL is worth the additional cache writes.
 
 ## Metadata / Cache Debugging
 
@@ -206,8 +217,9 @@ npm run deploy
 - Caches `200` responses for 7 days: `public, max-age=604800`
 - Caches `400` and `404` responses for 30 minutes: `public, max-age=1800`
 - `APACHE_ERROR_PAGE=true` by default, masking upstream error bodies behind a unified Apache-style error page with random OS and IP
-- Cache hits are written back to cache to extend lifetime for hot objects
-- `Range` requests are proxied directly to upstream storage and are not cached
+- XML responses are read as streams, and invalid outbound responses are blocked
+- Sliding renewal is disabled by default; set `CACHE_SLIDING_RENEWAL=true` to renew entries after half their TTL
+- `Range` and conditional requests are served from a complete cached object when possible; cache misses are proxied upstream
 - Query-parameter stripping is enabled by default; set `FORCE_QUERY_NORMALIZATION=false` to disable it
 - `?inline` rewrites `Content-Disposition` to `inline` without changing the cache entry
 - Optional CORS support through `CORS_ALLOW_ORIGIN`

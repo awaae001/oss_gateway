@@ -1,13 +1,12 @@
 import { fetchWithCache, getCacheMetadata } from "../cache/index.js";
 import { isConfigError, isEnabledByDefault, isUpstreamFetchError, json, rebuildResponse } from "../utils.js";
 import { createStorageClient } from "../providers/index.js";
+import { inspectOutboundXml } from "./xml.js";
 
 const ROUTER_MIDDLEWARES = [
   methodMiddleware,
-  configMiddleware,
   objectKeyMiddleware,
   normalizeRequestMiddleware,
-  upstreamMiddleware,
   responseMiddleware,
 ];
 
@@ -44,18 +43,6 @@ function methodMiddleware(routerContext) {
   }
 }
 
-function configMiddleware(routerContext) {
-  try {
-    routerContext.storageClient = createStorageClient(routerContext.env);
-  } catch (error) {
-    if (!isConfigError(error)) {
-      throw error;
-    }
-
-    routerContext.response = json({ error: error.message }, 500);
-  }
-}
-
 function objectKeyMiddleware(routerContext) {
   routerContext.objectKey = routerContext.url.pathname.replace(/^\/+/, "");
 }
@@ -81,37 +68,24 @@ function normalizeRequestMiddleware(routerContext) {
   routerContext.normalizedRequest = new Request(url.toString(), request);
 }
 
-function upstreamMiddleware(routerContext) {
-  try {
-    routerContext.upstreamUrl = routerContext.storageClient.objectUrl(
-      routerContext.objectKey,
-      routerContext.url.search,
-    );
-  } catch (error) {
-    if (!isConfigError(error)) {
-      throw error;
-    }
-
-    routerContext.response = json({ error: error.message }, 500);
-  }
-}
-
 async function responseMiddleware(routerContext) {
-  const { normalizedRequest, upstreamUrl, env, ctx, storageClient } = routerContext;
+  const { normalizedRequest, env, ctx } = routerContext;
+  const getStorageTarget = createLazyStorageTarget(routerContext);
 
   try {
     const response = routerContext.isMetadataRequest
-      ? await getCacheMetadata(normalizedRequest, upstreamUrl, env, routerContext.request, storageClient)
-      : await fetchWithCache(normalizedRequest, upstreamUrl, ctx, env, storageClient);
+      ? await getCacheMetadata(normalizedRequest, routerContext.request, getStorageTarget)
+      : await fetchWithCache(normalizedRequest, ctx, env, getStorageTarget);
 
-    if (await isBucketListing(response)) {
+    const inspectedResponse = await inspectOutboundXml(response);
+    if (!inspectedResponse) {
       routerContext.response = json({ error: "Forbidden" }, 403);
       return;
     }
 
     routerContext.response = routerContext.forceInline && !routerContext.isMetadataRequest
-      ? withInlineDisposition(response)
-      : response;
+      ? withInlineDisposition(inspectedResponse)
+      : inspectedResponse;
   } catch (error) {
     if (isConfigError(error)) {
       routerContext.response = json({ error: error.message }, 500);
@@ -127,6 +101,26 @@ async function responseMiddleware(routerContext) {
   }
 }
 
+function createLazyStorageTarget(routerContext) {
+  let target;
+
+  return () => {
+    if (target) {
+      return target;
+    }
+
+    const storageClient = createStorageClient(routerContext.env);
+    target = {
+      storageClient,
+      upstreamUrl: storageClient.objectUrl(
+        routerContext.objectKey,
+        routerContext.url.search,
+      ),
+    };
+    return target;
+  };
+}
+
 function withInlineDisposition(response) {
   const headers = new Headers(response.headers);
   const disposition = headers.get("content-disposition");
@@ -137,22 +131,4 @@ function withInlineDisposition(response) {
   );
 
   return rebuildResponse(response, { headers });
-}
-
-/**
- * Detects upstream bucket listing responses (OSS/S3 ListBucketResult XML)
- * and forces a 403 to avoid exposing the bucket contents.
- */
-async function isBucketListing(response) {
-  if (!response || response.status !== 200) return false;
-
-  const contentType = String(response.headers.get("content-type") || "").toLowerCase();
-  if (!contentType.startsWith("application/xml") && !contentType.startsWith("text/xml")) return false;
-
-  try {
-    const body = await response.clone().text();
-    return body.includes("<ListBucketResult");
-  } catch {
-    return false;
-  }
 }
